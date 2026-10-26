@@ -32,7 +32,7 @@ function ConvertFrom-SearchText([string]$Text,[string[]]$Titles,[datetimeoffset]
         $end=if($i+1 -lt $positions.Count){$positions[$i+1]}else{$lines.Count};$label='';$account=''
         for($j=$positions[$i]+1;$j -lt $end;$j++){ $line=$lines[$j].Trim();if($line -match '^(刚刚|\d+(分钟|小时|天)前|\d{4}[-/]\d{1,2}[-/]\d{1,2})$'){$label=$line;$account=$lines[$j-1].Trim();break} }
         if(!$label -or !$account){throw 'SEARCH_TEXT_DATE_MISSING'}
-        $items+=@{title=$Titles[$i];account=$account;relative_date=$label;age_seconds=(Get-DateLabelAge $label $At);index=$i}
+        $items+=@{title=$Titles[$i];account=$account;relative_date=$label;age_seconds=(Get-DateLabelAge $label $At);age_reference=$At.ToString('o');index=$i}
     }
     return ,$items
 }
