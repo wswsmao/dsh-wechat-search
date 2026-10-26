@@ -92,17 +92,17 @@ function Read-ArticleHeader($Window,$Candidate,[datetimeoffset]$Reference){
         if(!$date){return $null};$dt=[datetime]::ParseExact($date,'yyyy年M月d日 HH:mm',[Globalization.CultureInfo]::InvariantCulture)
         return @{title=$at.Current.Name;author=$author;account=$acct.Current.Name;date=$dt.ToString('yyyy-MM-dd');published_at_iso=([datetimeoffset]::new($dt,[timespan]::FromHours(8))).ToString('o');publication_precision='minute';content_type='article'}
     }
-    $share=Element-Id $Window.root 'js_text_desc';if(!$share -or (Normalize-Text $Window.document.Current.Name) -cne (Normalize-Text $Candidate.title)){return $null}
+    $share=Element-Id $Window.root 'js_text_desc';if(!$share){$share=Element-Id $Window.root 'js_video_page_title'};if(!$share -or (Normalize-Text $Window.document.Current.Name) -cne (Normalize-Text $Candidate.title)){return $null}
     $all=$Window.document.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);$label='';$account=''
     foreach($e in $all){if($e.Current.ClassName -match 'rich_media_meta_list_combine'){$label=$e.Current.Name};if($e.Current.AutomationId -eq 'js_wx_follow_nickname'){$account=$e.Current.Name}}
     $relativeStamp=$null
     if($label -match '(今天|昨天|前天)\s*(\d{1,2}:\d{2})'){$days=@{'今天'=0;'昨天'=1;'前天'=2}[$Matches[1]];$clock=$Matches[2];$dt=([datetimeoffset]::Now.ToOffset([timespan]::FromHours(8))).Date.AddDays(-$days);$time=[datetime]::ParseExact($clock,'H:mm',[Globalization.CultureInfo]::InvariantCulture);$dt=$dt.AddHours($time.Hour).AddMinutes($time.Minute);$relativeStamp=[datetimeoffset]::new($dt,[timespan]::FromHours(8))}
-    if($relativeStamp){if(!$account){$account=$Candidate.account};if((Normalize-Text $account) -cne (Normalize-Text $Candidate.account)){return $null};return @{title=$Window.document.Current.Name;author='';account=$account;date=$relativeStamp.ToString('yyyy-MM-dd');published_at_iso=$relativeStamp.ToString('o');publication_precision='minute';content_type='text_share';date_year_basis='visible relative publication date'}}
+    if($relativeStamp){if(!$account){$account=$Candidate.account};if((Normalize-Text $account) -cne (Normalize-Text $Candidate.account)){return $null};return @{title=$Window.document.Current.Name;author='';account=$account;date=$relativeStamp.ToString('yyyy-MM-dd');published_at_iso=$relativeStamp.ToString('o');publication_precision='minute';content_type=$(if(Element-Id $Window.root 'js_video_page_title'){'video_share'}else{'text_share'});date_year_basis='visible relative publication date'}}
     if(!$label -or $label -notmatch '(\d{1,2})月(\d{1,2})日'){return $null};$month=[int]$Matches[1];$day=[int]$Matches[2]
     $ageReference=if($Candidate.age_reference){[datetimeoffset]::Parse($Candidate.age_reference)}else{$Reference};$estimated=$ageReference.AddSeconds(-[double]$Candidate.age_seconds);$possible=@();foreach($year in @(($Reference.Year-1),$Reference.Year,($Reference.Year+1))){try{$d=[datetime]::new($year,$month,$day);$possible+=@{date=$d;distance=[math]::Abs(($d-$estimated.DateTime).TotalDays)}}catch{}}
     $chosen=$possible|Sort-Object {$_.distance}|Select-Object -First 1;if(!$chosen -or $chosen.distance -gt 2){return $null}
     if(!$account){$account=$Candidate.account};if((Normalize-Text $account) -cne (Normalize-Text $Candidate.account)){return $null}
-    return @{title=$Window.document.Current.Name;author='';account=$account;date=$chosen.date.ToString('yyyy-MM-dd');published_at_iso=$null;publication_precision='day';content_type='text_share';date_year_basis='search relative date corroboration'}
+    return @{title=$Window.document.Current.Name;author='';account=$account;date=$chosen.date.ToString('yyyy-MM-dd');published_at_iso=$null;publication_precision='day';content_type=$(if(Element-Id $Window.root 'js_video_page_title'){'video_share'}else{'text_share'});date_year_basis='search relative date corroboration'}
 }
 function Read-PublicUrl($Window){
     for($i=0;$i -lt 25;$i++){
