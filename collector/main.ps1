@@ -1,6 +1,7 @@
 ﻿param([Parameter(Mandatory=$true)][string]$RequestPath,[Parameter(Mandatory=$true)][string]$JobDir)
 $ErrorActionPreference='Stop'
 . ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Core.ps1'),[Text.Encoding]::UTF8)))
+. ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Body.ps1'),[Text.Encoding]::UTF8)))
 $script:OwnedWindows=@{};$script:MainHandle=0;$script:SavedClipboard=$null;$script:WasMinimized=$false
 $script:OriginalForeground=0;$script:Cleaning=$false;$lock=$null
 $request=Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8|ConvertFrom-Json
@@ -9,6 +10,9 @@ $resolvedJob=[IO.Path]::GetFullPath($JobDir);$allowedRoot=[IO.Path]::GetFullPath
 if(!$resolvedJob.StartsWith($allowedRoot,[StringComparison]::OrdinalIgnoreCase)){throw 'Job directory must be inside plugin runtime jobs'}
 if(!$request.keyword -or $request.keyword -isnot [string] -or $request.keyword.Length -gt 200 -or $request.lookback_days -lt 1 -or $request.lookback_days -gt 7 -or [int]$request.lookback_days -ne $request.lookback_days){throw 'Invalid request'}
 $reference=([datetimeoffset]::Parse($request.reference_time)).ToOffset([timespan]::FromHours(8));$cutoff=$reference.AddDays(-[int]$request.lookback_days)
+if($reference -gt [datetimeoffset]::Now){throw 'Future reference_time is not allowed'}
+if($null -ne $request.include_body -and $request.include_body -isnot [bool]){throw 'include_body must be boolean'}
+$includeBody=($request.include_body -eq $true)
 $timeoutMinutes=30;$delayMs=600;$maxRetries=2
 if($request.settings){if($request.settings.timeout_minutes){$timeoutMinutes=[int]$request.settings.timeout_minutes};if($null -ne $request.settings.delay_ms){$delayMs=[int]$request.settings.delay_ms};if($null -ne $request.settings.max_retries){$maxRetries=[int]$request.settings.max_retries}}
 $timeoutMinutes=[math]::Max(1,[math]::Min(120,$timeoutMinutes));$delayMs=[math]::Max(300,[math]::Min(10000,$delayMs));$maxRetries=[math]::Max(0,[math]::Min(3,$maxRetries))
@@ -28,9 +32,11 @@ function Publish-State {
     $seen=@{};$matches=@();$outside=@();$uncertain=@()
     foreach($record in $script:Records){if(!$record.identity){$record.identity=Get-ArticleIdentity $record.url};if($seen.ContainsKey($record.identity)){continue};$seen[$record.identity]=$true;$inside=Get-WindowMembership $record $cutoff $reference;$record.within_window=$inside;if($inside -eq $true){$matches+=$record}elseif($inside -eq $false){$outside+=$record}else{$uncertain+=$record}}
     $matches=@($matches|Sort-Object @{Expression={if($_.published_at_iso){$_.published_at_iso}else{$_.date}};Descending=$true})
-    $scopeComplete=($script:Status -eq 'complete' -and ($script:Boundary -or $script:Exhausted) -and !$script:Errors.Count -and !$uncertain.Count -and !$script:OrderingIssues.Count)
-    $coverage=@{search_boundary_reached=$script:Boundary;search_exhausted=$script:Exhausted;scope_complete=$scopeComplete;global_complete=$false;scope='WeChat search-visible latest results; no keyword expansion; no artificial result count limit'}
-    $summary=@{id=$request.id;keyword=$request.keyword;lookback_days=[int]$request.lookback_days;status=$script:Status;phase=$script:Phase;started_at=$request.reference_time;reference_time=$reference.ToString('o');cutoff_time=$cutoff.ToString('o');updated_at=[datetimeoffset]::Now.ToString('o');worker_pid=$PID;manager_owner_pid=$request.manager_owner_pid;manager_owner_token=$request.manager_owner_token;counts=@{discovered=$script:Candidates.Count;processed=$script:Processed;matched=$matches.Count;failed=$script:Errors.Count;outside=$outside.Count;date_uncertain=$uncertain.Count};stop_reason=$script:StopReason;coverage=$coverage;files=$files;preview=@($matches|Select-Object -First 5);errors=@($script:Errors);ordering_issues=@($script:OrderingIssues);load_counts=@($script:LoadCounts)}
+    $bodyIncomplete=@($matches|Where-Object{$includeBody -and !$_.body_complete})
+    $bodyRead=@($matches|Where-Object{$_.body_text})
+    $scopeComplete=($script:Status -eq 'complete' -and ($script:Boundary -or $script:Exhausted) -and !$script:Errors.Count -and !$uncertain.Count -and !$script:OrderingIssues.Count -and !$bodyIncomplete.Count)
+    $coverage=@{search_boundary_reached=$script:Boundary;search_exhausted=$script:Exhausted;scope_complete=$scopeComplete;global_complete=$false;body_requested=$includeBody;body_complete=($includeBody -and $script:Phase -eq 'finished' -and $script:Processed -ge $script:Candidates.Count -and !$bodyIncomplete.Count);scope='WeChat search-visible latest results; no keyword expansion; no artificial result count limit'}
+    $summary=@{id=$request.id;keyword=$request.keyword;lookback_days=[int]$request.lookback_days;status=$script:Status;phase=$script:Phase;started_at=$request.reference_time;reference_time=$reference.ToString('o');cutoff_time=$cutoff.ToString('o');updated_at=[datetimeoffset]::Now.ToString('o');worker_pid=$PID;manager_owner_pid=$request.manager_owner_pid;manager_owner_token=$request.manager_owner_token;include_body=$includeBody;counts=@{discovered=$script:Candidates.Count;processed=$script:Processed;matched=$matches.Count;failed=$script:Errors.Count;outside=$outside.Count;date_uncertain=$uncertain.Count;body_read=$bodyRead.Count;body_incomplete=$bodyIncomplete.Count};stop_reason=$script:StopReason;coverage=$coverage;files=$files;preview=@($matches|Select-Object -First 5|ForEach-Object{Get-PublicRecord $_});errors=@($script:Errors);ordering_issues=@($script:OrderingIssues);load_counts=@($script:LoadCounts)}
     $result=@{schema_version=1;job=$summary;records=@($matches);outside_records=@($outside);date_uncertain_records=@($uncertain);errors=@($script:Errors)}
     Write-AtomicJson $files.json $result;Write-ResultCsv $files.csv $matches
     Write-AtomicJson $checkpointPath @{keyword=$request.keyword;reference_time=$reference.ToString('o');candidates=@($script:Candidates);pending_candidates=@($script:PreviousCandidates);records=@($script:Records);errors=@($script:Errors);ordering_issues=@($script:OrderingIssues)}
@@ -82,7 +88,7 @@ try {
     $lastExact=$null
     foreach($candidate in $script:Candidates){
         Check-Stop;$script:Processed++;$key=(Normalize-Text $candidate.title)+'|'+(Normalize-Text $candidate.account)
-        if($candidate.index -lt 0 -and $cached.ContainsKey($key) -and $keyCounts[$key] -eq 1){continue}
+        if($candidate.index -lt 0 -and $cached.ContainsKey($key) -and $keyCounts[$key] -eq 1 -and (!$includeBody -or $cached[$key].body_complete)){continue}
         # Current candidates are opened even on resume: title/account alone cannot prove article identity.
         $success=$false;$failure='';$article=$null
         for($attempt=0;$attempt -le $maxRetries;$attempt++){
@@ -95,8 +101,17 @@ try {
                 if(!$e){throw 'SEARCH_INDEX_CHANGED'}
                 $article=Open-Candidate $search $e $candidate $reference
                 $record=$article.record;$record.url=Read-PublicUrl $article.window;$record.identity=Get-ArticleIdentity $record.url;$record.captured_at=[datetimeoffset]::Now.ToString('o');$record.source='logged-in WeChat desktop';$record.query=$request.keyword
+                $membership=Get-WindowMembership $record $cutoff $reference
+                if($includeBody -and $membership -eq $true){
+                    $body=Get-BodyCache $record.identity $runtimeRoot
+                    if(!$body){$body=Read-ArticleBody $article.window;try{Save-BodyCache $record.identity $runtimeRoot $body}catch{}}
+                    Copy-BodyFields $record $body
+                }else{Copy-BodyFields $record @{body_text='';body_status=$(if($includeBody){'not_requested_outside_or_uncertain_window'}else{'not_requested'});body_chars=0;body_complete=$false;body_truncated=$false}}
                 if($record.published_at_iso){$dt=[datetimeoffset]::Parse($record.published_at_iso);if($lastExact -and $dt -gt $lastExact){$script:OrderingIssues+=@{type='exact_date_inversion';index=$candidate.index}};$lastExact=$dt}
-                $script:Records+=$record;$cached[$key]=$record;$success=$true;Close-OwnedArticle $article.window;break
+                $prior=@($script:Records|Where-Object{$_.identity -ceq $record.identity})|Select-Object -First 1
+                if($includeBody -and !$record.body_complete -and $prior.body_complete){Copy-BodyFields $record $prior;$record.body_from_cache=$true}
+                $script:Records=@($script:Records|Where-Object{$_.identity -cne $record.identity})+@($record)
+                $cached[$key]=$record;$success=$true;Close-OwnedArticle $article.window;break
             }catch{
                 $failure=$_.Exception.Message
                 if($failure -match 'CANCELLED|TIME_BUDGET|DESKTOP_LOCKED|CHALLENGE|QUERY_CHANGED|SORT_CHANGED|FOCUS_UNAVAILABLE|FOCUS_CHANGED'){throw}
@@ -107,7 +122,8 @@ try {
         Publish-State;Desktop-Pause $delayMs
     }
     $uncertainDates=@($script:Records|Where-Object{$null -eq (Get-WindowMembership $_ $cutoff $reference)})
-    if($script:Errors.Count -or $script:OrderingIssues.Count -or $uncertainDates.Count){$script:Status='partial';$script:StopReason=if($script:Errors.Count){'ARTICLE_EXTRACTION_ERRORS'}elseif($script:OrderingIssues.Count){'RESULT_ORDERING_UNCERTAINTY'}else{'PUBLICATION_DATE_PRECISION_UNCERTAIN'}}else{$script:Status='complete';$script:StopReason=if($script:Boundary){'TIME_WINDOW_BOUNDARY_REACHED'}else{'SEARCH_EXHAUSTED'}}
+    $bodyIncompleteFinal=@($script:Records|Where-Object{$includeBody -and (Get-WindowMembership $_ $cutoff $reference) -eq $true -and !$_.body_complete})
+    if($script:Errors.Count -or $script:OrderingIssues.Count -or $uncertainDates.Count -or $bodyIncompleteFinal.Count){$script:Status='partial';$script:StopReason=if($script:Errors.Count){'ARTICLE_EXTRACTION_ERRORS'}elseif($script:OrderingIssues.Count){'RESULT_ORDERING_UNCERTAINTY'}elseif($uncertainDates.Count){'PUBLICATION_DATE_PRECISION_UNCERTAIN'}else{'ARTICLE_BODY_INCOMPLETE'}}else{$script:Status='complete';$script:StopReason=if($script:Boundary){'TIME_WINDOW_BOUNDARY_REACHED'}else{'SEARCH_EXHAUSTED'}}
     $script:Phase='finished';Publish-State
 }catch{
     $reason=$_.Exception.Message;$script:StopReason=$reason

@@ -9,6 +9,30 @@ DSH Host工具插件。在本机已登录微信中仅搜索原始关键词，按
 
 `keyword`为非空字符串（最多200字符），保留原始内容（包括首尾空白），不拼日期或扩展关键词。`lookback_days`为整数1～7，按任务启动时刻固定最近24～168小时；北京时间。续采保留原始时间窗，不偷偷换成“现在”。
 
+## 同一 Host 的确定性日报接口
+
+消费插件声明 `inject: ['wechatSearch']`，然后直接调用 `ctx.wechatSearch`；它和公开工具共用一个任务管理器及桌面互斥，不需要模型决定查询哪些关键词。
+
+```js
+const receipt = await ctx.wechatSearch.start(
+  { keyword: 'Agentic OS', lookback_days: 2 },
+  { reference_time: frozenRunTime, include_body: true, signal },
+);
+const terminal = await ctx.wechatSearch.wait(receipt.job_id, { signal });
+const fullResult = await ctx.wechatSearch.getResult(receipt.job_id);
+```
+
+- `start(input, options?)`：input仍仅keyword/lookback_days；内部options可指定RFC3339格式且非未来的 `reference_time`、布尔 `include_body`、`AbortSignal`。
+- `status(id)` / `cancel(id)` / `resume(id)`：与公开任务工具同义；续采保留原始时间窗和正文选项。
+- `wait(id, {signal}?)`：等待任意真实终态（包括partial/needs_user/cancelled/failed），并等待本管理器的工作进程释放桌面锁；不会把partial转换为成功。取消signal会请求停止采集并抛AbortError。
+- `getResult(id)`：读取原完整JSON `{schema_version, job, records, outside_records, date_uncertain_records, errors}`，未生成则明确RESULT_NOT_READY。该接口不通过浏览器RPC暴露。
+
+正文默认关闭，旧工具两参数/schema不变。只有内部 `include_body:true` 才读取确定在窗口内的文章/文字分享正文。优先读取 `js_content` / `js_text_desc` 的UIAutomation内容范围或后代文本；无法确定完整范围的页面选择fallback标为partial。没有可读文本标为unavailable，不假称已读。图片、音视频不做OCR，可能保留正文内嵌广告。
+
+正文仅写入私有结果JSON、检查点和 `.runtime/body-cache/`；不进入CSV、status预览或工具内容。字段为 `body_text`、`body_status`（ok/partial/truncated/unavailable/not_requested）、`body_chars`、`body_complete`、`body_truncated`、`body_read_method`。单篇最大500,000字符，超过时明确truncated，正文不完整会使日报采集任务partial/ARTICLE_BODY_INCOMPLETE。没有文章数量上限。
+
+同一公开文章身份6小时内的完整正文可复用；续采和跨关键词仍会打开文章验证身份，不按标题猜测重复。日精度边界不确定项不会冒然抓取正文。采集到带微信登录态参数的链接时只保留公开身份或省略导航链接，不将临时key/uin/pass_ticket写入JSON。
+
 ## 安装
 
 使用DSH插件管理器安装本项目绝对目录。不要手工改profile的package.json或补丁。安装可能在DSH profile登记引用，这是Harness管理的数据；项目本体和检索运行数据始终位于本目录。
