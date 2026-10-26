@@ -7,6 +7,7 @@ const jobs=path.join(root,'.runtime','jobs');
 for(const id of await fs.readdir(jobs)){
   let s,r;try{s=JSON.parse((await fs.readFile(path.join(jobs,id,'status.json'),'utf8')).replace(/^\uFEFF/,''));r=JSON.parse((await fs.readFile(path.join(jobs,id,'results','result.json'),'utf8')).replace(/^\uFEFF/,''));}catch{continue;}
   assert.equal(s.keyword,r.job.keyword);assert.equal(s.coverage.global_complete,false);
+  if(!['starting','running','cancelling'].includes(s.status)){assert.equal(s.status,r.job.status);assert.equal(s.coverage.scope_complete,r.job.coverage.scope_complete);}
   assert.equal(r.records.length,s.counts.matched);const cut=Date.parse(s.cutoff_time),ref=Date.parse(s.reference_time);
   const identities=new Set();
   for(const row of r.records){
