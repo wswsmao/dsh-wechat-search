@@ -165,11 +165,35 @@ function Tear-Off-Window($Window){
         $stripHeight=[int]($doc.Y-$rect.Top)
         if($stripHeight -lt 20){return $false}
         $grabY=[int]($rect.Top+[Math]::Min(55,$stripHeight*0.55))
-        $grabX=[int]($rect.Left+700)
-        if($grabX -gt $rect.Right-40){$grabX=[int]($rect.Left+$rect.Width*0.4)}
+        # Grab inside the tab strip regardless of window size: a detached window can be far smaller,
+        # so a fixed pixel offset from the left edge would land outside and make every drag a no-op.
+        $grabX=[int]($rect.Left+$rect.Width*0.35)
+        if($grabX -gt $rect.Right-40){$grabX=[int]($rect.Left+$rect.Width*0.5)}
+        if($grabX -lt $rect.Left+20){$grabX=[int]($rect.Left+20)}
+        $before=@(Browser-Windows|ForEach-Object{$_.handle})
         Activate-Window $handle
-        Native-Drag -FromX $grabX -FromY $grabY -ToX ($grabX+300) -ToY ($grabY+760)
-        return $true
+        # Windows drift after each detach: MoveWindow/SetWindowPos report success but do not actually
+        # reposition these windows, so a fixed coordinate stops matching. Re-measure on retry instead.
+        for($attempt=0;$attempt -lt 2;$attempt++){
+            if($attempt -gt 0){
+                Desktop-Pause 400
+                $again=Window-Rect $handle
+                $doc2=$Window.document.Current.BoundingRectangle
+                if($doc2.IsEmpty){break}
+                $h2=[int]($doc2.Y-$again.Top)
+                if($h2 -lt 20){break}
+                $grabY=[int]($again.Top+[Math]::Min(55,$h2*0.55))
+                $grabX=[int]($again.Left+$again.Width*0.35)
+                if($grabX -gt $again.Right-40){$grabX=[int]($again.Left+$again.Width*0.5)}
+                if($grabX -lt $again.Left+20){$grabX=[int]($again.Left+20)}
+                Activate-Window $handle
+            }
+            Native-Drag -FromX $grabX -FromY $grabY -ToX ($grabX+300) -ToY ($grabY+760) -Steps 20 -StepMs 30
+            $after=@(Browser-Windows|ForEach-Object{$_.handle})
+            $detached=$after|Where-Object{$_ -notin $before}|Select-Object -First 1
+            if($detached){$script:OwnedWindows[$detached]=$true;return $true}
+        }
+        return $false
     }catch{return $false}
 }
 function Close-OwnedArticle($Window){
