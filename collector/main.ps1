@@ -107,7 +107,7 @@ try {
         Publish-State;Desktop-Pause $delayMs
     }
     $uncertainDates=@($script:Records|Where-Object{$null -eq (Get-WindowMembership $_ $cutoff $reference)})
-    if($script:Errors.Count -or $script:OrderingIssues.Count -or $uncertainDates.Count){$script:Status='partial';$script:StopReason='ARTICLE_ERRORS_OR_ORDERING_UNCERTAINTY'}else{$script:Status='complete';$script:StopReason=if($script:Boundary){'TIME_WINDOW_BOUNDARY_REACHED'}else{'SEARCH_EXHAUSTED'}}
+    if($script:Errors.Count -or $script:OrderingIssues.Count -or $uncertainDates.Count){$script:Status='partial';$script:StopReason=if($script:Errors.Count){'ARTICLE_EXTRACTION_ERRORS'}elseif($script:OrderingIssues.Count){'RESULT_ORDERING_UNCERTAINTY'}else{'PUBLICATION_DATE_PRECISION_UNCERTAIN'}}else{$script:Status='complete';$script:StopReason=if($script:Boundary){'TIME_WINDOW_BOUNDARY_REACHED'}else{'SEARCH_EXHAUSTED'}}
     $script:Phase='finished';Publish-State
 }catch{
     $reason=$_.Exception.Message;$script:StopReason=$reason
