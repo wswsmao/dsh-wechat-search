@@ -20,6 +20,39 @@ $script:Deadline=[datetimeoffset]::Now.AddMinutes($timeoutMinutes)
 $cancelPath=Join-Path $JobDir 'cancel.flag';$checkpointPath=Join-Path $JobDir 'checkpoint.json';$statusPath=Join-Path $JobDir 'status.json'
 $resultsDir=Join-Path $JobDir 'results';[void][IO.Directory]::CreateDirectory($resultsDir)
 $files=@{json=Join-Path $resultsDir 'result.json';csv=Join-Path $resultsDir 'result.csv'}
+# Stage 2: read bodies for a batch of already-open, detached windows, then close them.
+# Bodies are read through UIA only (no clipboard), so concurrent windows cannot corrupt each other.
+function Read-Opened-Batch($Batch,$Cutoff,$Reference,[bool]$IncludeBody,$RuntimeRoot,[ref]$Cached){
+    $wins=@($Batch|Where-Object{$_.window})
+    if($wins.Count -gt $script:ParallelStats.max_windows){$script:ParallelStats.max_windows=$wins.Count}
+    foreach($entry in $Batch){
+        Check-Stop
+        $record=$entry.record;$window=$entry.window
+        try{
+            if($IncludeBody -and $entry.membership -eq $true){
+                $body=$null
+                $body=Get-BodyCache $record.identity $RuntimeRoot
+                if(!$body){
+                    $body=Read-ArticleBody-UiaOnly $window
+                    if($body -and $body.body_text){try{Save-BodyCache $record.identity $RuntimeRoot $body}catch{}}
+                }
+                if($body){Copy-BodyFields $record $body}
+                else{Copy-BodyFields $record @{body_text='';body_status='unavailable';body_chars=0;body_complete=$false;body_truncated=$false}}
+            }else{
+                Copy-BodyFields $record @{body_text='';body_status=$(if($IncludeBody){'not_requested_outside_or_uncertain_window'}else{'not_requested'});body_chars=0;body_complete=$false;body_truncated=$false}
+            }
+            $prior=@($script:Records|Where-Object{$_.identity -ceq $record.identity})|Select-Object -First 1
+            if($IncludeBody -and !$record.body_complete -and $prior -and $prior.body_complete){Copy-BodyFields $record $prior;$record.body_from_cache=$true}
+            $script:Records=@($script:Records|Where-Object{$_.identity -cne $record.identity})+@($record)
+            if($Cached -and $Cached.Value){$Cached.Value[$entry.key]=$record}
+        }catch{
+            $script:Errors+=@{title=$record.title;account=$record.account;index=$entry.candidate.index;reason=$_.Exception.Message}
+        }finally{
+            try{Close-OwnedArticle $window}catch{}
+        }
+    }
+    Publish-State
+}
 $script:Candidates=@();$script:Records=@();$script:Errors=@();$script:Processed=0;$script:Boundary=$false;$script:Exhausted=$false;$script:OrderingIssues=@();$script:LoadCounts=@();$script:Phase='initializing';$script:StopReason='';$script:Status='running';$script:PreviousCandidates=@()
 if(Test-Path -LiteralPath $checkpointPath){$cp=Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8|ConvertFrom-Json;$script:PreviousCandidates=if($cp.pending_candidates){@($cp.pending_candidates)}else{@($cp.candidates)};$script:Candidates=@($cp.candidates);if($cp.ordering_issues){$script:OrderingIssues=@($cp.ordering_issues)};$script:Records=@();foreach($r in $cp.records){$h=@{};foreach($p in $r.PSObject.Properties){$h[$p.Name]=$p.Value};$script:Records+=$h}}
 function Check-Stop {
@@ -86,6 +119,13 @@ try {
     $cached=@{};foreach($record in $script:Records){$key=(Normalize-Text $record.title)+'|'+(Normalize-Text $record.account);$cached[$key]=$record}
     $keyCounts=@{};foreach($c in $script:Candidates){$k=(Normalize-Text $c.title)+'|'+(Normalize-Text $c.account);if(!$keyCounts.ContainsKey($k)){$keyCounts[$k]=0};$keyCounts[$k]++}
     $lastExact=$null
+    $parallelWindowLimit=6
+    if($request.parallel_windows){$parallelWindowLimit=[int]$request.parallel_windows}
+    $parallelWindowLimit=[math]::Max(1,[math]::Min(64,$parallelWindowLimit))
+    $script:ParallelStats=@{opened=0;teared=0;batches=0;max_windows=0}
+    # ---- Pipeline stage 1: open candidates and tear each off so windows accumulate ----
+    # Opening stays serial (WeChat reuses the active article window), but it no longer waits for body reading.
+    $opened=New-Object System.Collections.ArrayList
     foreach($candidate in $script:Candidates){
         Check-Stop;$script:Processed++;$key=(Normalize-Text $candidate.title)+'|'+(Normalize-Text $candidate.account)
         if($candidate.index -lt 0 -and $cached.ContainsKey($key) -and $keyCounts[$key] -eq 1 -and (!$includeBody -or $cached[$key].body_complete)){continue}
@@ -101,17 +141,16 @@ try {
                 if(!$e){throw 'SEARCH_INDEX_CHANGED'}
                 $article=Open-Candidate $search $e $candidate $reference
                 $record=$article.record;$record.url=Read-PublicUrl $article.window;$record.identity=Get-ArticleIdentity $record.url;$record.captured_at=[datetimeoffset]::Now.ToString('o');$record.source='logged-in WeChat desktop';$record.query=$request.keyword
-                $membership=Get-WindowMembership $record $cutoff $reference
-                if($includeBody -and $membership -eq $true){
-                    $body=Get-BodyCache $record.identity $runtimeRoot
-                    if(!$body){$body=Read-ArticleBody $article.window;try{Save-BodyCache $record.identity $runtimeRoot $body}catch{}}
-                    Copy-BodyFields $record $body
-                }else{Copy-BodyFields $record @{body_text='';body_status=$(if($includeBody){'not_requested_outside_or_uncertain_window'}else{'not_requested'});body_chars=0;body_complete=$false;body_truncated=$false}}
                 if($record.published_at_iso){$dt=[datetimeoffset]::Parse($record.published_at_iso);if($lastExact -and $dt -gt $lastExact){$script:OrderingIssues+=@{type='exact_date_inversion';index=$candidate.index}};$lastExact=$dt}
-                $prior=@($script:Records|Where-Object{$_.identity -ceq $record.identity})|Select-Object -First 1
-                if($includeBody -and !$record.body_complete -and $prior.body_complete){Copy-BodyFields $record $prior;$record.body_from_cache=$true}
-                $script:Records=@($script:Records|Where-Object{$_.identity -cne $record.identity})+@($record)
-                $cached[$key]=$record;$success=$true;Close-OwnedArticle $article.window;break
+                $membership=Get-WindowMembership $record $cutoff $reference
+                # Stage 1 does not read bodies: it detaches the window so several articles stay open at once.
+                [void]$opened.Add(@{window=$article.window;record=$record;candidate=$candidate;key=$key;membership=$membership})
+                $script:ParallelStats.opened++
+                if($includeBody -and $membership -eq $true){
+                    if(Tear-Off-Window $article.window){$script:ParallelStats.teared++}
+                }
+                $success=$true
+                break
             }catch{
                 $failure=$_.Exception.Message
                 if($failure -match 'CANCELLED|TIME_BUDGET|DESKTOP_LOCKED|CHALLENGE|QUERY_CHANGED|SORT_CHANGED|FOCUS_UNAVAILABLE|FOCUS_CHANGED'){throw}
@@ -119,8 +158,11 @@ try {
             }
         }
         if(!$success){$script:Errors+=@{title=$candidate.title;account=$candidate.account;index=$candidate.index;reason=$failure}}
+        # Drain the window pool when it reaches the configured size, so windows never pile up without limit.
+        if($opened.Count -ge $parallelWindowLimit){Read-Opened-Batch $opened $cutoff $reference $includeBody $runtimeRoot ([ref]$cached);$opened.Clear();$script:ParallelStats.batches++}
         Publish-State;Desktop-Pause $delayMs
     }
+    if($opened.Count){Read-Opened-Batch $opened $cutoff $reference $includeBody $runtimeRoot ([ref]$cached);$opened.Clear();$script:ParallelStats.batches++}
     $uncertainDates=@($script:Records|Where-Object{$null -eq (Get-WindowMembership $_ $cutoff $reference)})
     $bodyIncompleteFinal=@($script:Records|Where-Object{$includeBody -and (Get-WindowMembership $_ $cutoff $reference) -eq $true -and !$_.body_complete})
     if($script:Errors.Count -or $script:OrderingIssues.Count -or $uncertainDates.Count -or $bodyIncompleteFinal.Count){$script:Status='partial';$script:StopReason=if($script:Errors.Count){'ARTICLE_EXTRACTION_ERRORS'}elseif($script:OrderingIssues.Count){'RESULT_ORDERING_UNCERTAINTY'}elseif($uncertainDates.Count){'PUBLICATION_DATE_PRECISION_UNCERTAIN'}else{'ARTICLE_BODY_INCOMPLETE'}}else{$script:Status='complete';$script:StopReason=if($script:Boundary){'TIME_WINDOW_BOUNDARY_REACHED'}else{'SEARCH_EXHAUSTED'}}

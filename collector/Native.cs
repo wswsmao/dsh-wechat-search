@@ -30,6 +30,8 @@ public static class WeChatNative {
     [DllImport("user32.dll")] static extern bool SwitchDesktop(IntPtr h);
     public static bool InteractiveDesktop() { var h=InputDesktop(0,false,0x0100); if(h==IntPtr.Zero)return false; try{return SwitchDesktop(h);}finally{CloseDesktop(h);} }
     public static void Click(int x,int y) { SetCursorPos(x,y); mouse_event(2,0,0,0,UIntPtr.Zero); mouse_event(4,0,0,0,UIntPtr.Zero); }
+    public static void MouseDown(int x,int y) { SetCursorPos(x,y); mouse_event(2,0,0,0,UIntPtr.Zero); }
+    public static void MouseUp(int x,int y) { SetCursorPos(x,y); mouse_event(4,0,0,0,UIntPtr.Zero); }
     public static void Wheel(int x,int y) { SetCursorPos(x,y); mouse_event(2048,0,0,unchecked((uint)-1200),UIntPtr.Zero); }
     public static long[] BrowserHandles(long main, uint[] pids) {
         var result=new HashSet<long>();

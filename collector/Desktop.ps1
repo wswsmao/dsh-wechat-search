@@ -137,6 +137,41 @@ function Open-Candidate($Search,$Element,$Candidate,[datetimeoffset]$Reference){
     }
     throw 'ARTICLE_HEADER_UNAVAILABLE'
 }
+function Native-Drag {
+    param([int]$FromX,[int]$FromY,[int]$ToX,[int]$ToY,[int]$Steps=20,[int]$StepMs=30)
+    [WeChatNative]::SetCursorPos($FromX,$FromY);Desktop-Pause 200
+    [WeChatNative]::MouseDown($FromX,$FromY);Desktop-Pause 200
+    for($i=1;$i -le $Steps;$i++){
+        $x=[int]($FromX+($ToX-$FromX)*$i/$Steps);$y=[int]($FromY+($ToY-$FromY)*$i/$Steps)
+        [WeChatNative]::SetCursorPos($x,$y);Desktop-Pause $StepMs
+    }
+    [WeChatNative]::MouseUp($ToX,$ToY);Desktop-Pause 200
+}
+function Window-Rect([long]$Handle){
+    $r=New-Object WeChatNative+Rect;[void][WeChatNative]::GetWindowRect([IntPtr]$Handle,[ref]$r)
+    return @{Left=$r.Left;Top=$r.Top;Right=$r.Right;Bottom=$r.Bottom;Width=$r.Right-$r.Left;Height=$r.Bottom-$r.Top}
+}
+# Tear the active tab out of an article window's tab strip so it becomes an independent window.
+# The tab strip is a native widget and is NOT in the UIA tree; it sits above the document rect.
+# Grab point is derived from the document offset so it adapts to DPI and window width.
+function Tear-Off-Window($Window){
+    if(!$Window){return $false}
+    $handle=$Window.handle
+    try{
+        $rect=Window-Rect $handle
+        $doc=$Window.document.Current.BoundingRectangle
+        if($doc.IsEmpty){return $false}
+        # Tab strip occupies the band between the window top and the document top.
+        $stripHeight=[int]($doc.Y-$rect.Top)
+        if($stripHeight -lt 20){return $false}
+        $grabY=[int]($rect.Top+[Math]::Min(55,$stripHeight*0.55))
+        $grabX=[int]($rect.Left+700)
+        if($grabX -gt $rect.Right-40){$grabX=[int]($rect.Left+$rect.Width*0.4)}
+        Activate-Window $handle
+        Native-Drag -FromX $grabX -FromY $grabY -ToX ($grabX+300) -ToY ($grabY+760)
+        return $true
+    }catch{return $false}
+}
 function Close-OwnedArticle($Window){
     # Close only tabs/windows created by this worker, never a pre-existing user's browser.
     if(!$Window -or !$script:OwnedWindows.ContainsKey($Window.handle)){return}

@@ -62,6 +62,16 @@ function Body-SelectionFallback($Window,$Element) {
         return $page.Substring($start,$end-$start+$last.Length)
     } finally {if($saved){try{[Windows.Forms.Clipboard]::SetDataObject($saved,$true)}catch{}}}
 }
+# Body capture that NEVER touches the clipboard, so several detached windows can be read concurrently
+# without corrupting one another. Used by the parallel pipeline.
+function Read-ArticleBody-UiaOnly($Window) {
+    Check-Stop
+    $element=Body-Element $Window
+    if(!$element){return (New-BodyCapture '' 'content_element_missing' $false $script:BodyCharLimit)}
+    try{$text=Body-TextRange $Window $element;if($text -and $text.Trim()){return (New-BodyCapture $text 'uia_content_range' $true $script:BodyCharLimit)}}catch{if($_.Exception.Message -match 'CANCELLED|TIME_BUDGET|DESKTOP_LOCKED'){throw}}
+    try{$text=Body-DescendantText $element;if($text -and $text.Trim()){return (New-BodyCapture $text 'uia_content_descendants' $true $script:BodyCharLimit)}}catch{if($_.Exception.Message -match 'CANCELLED|TIME_BUDGET|DESKTOP_LOCKED'){throw}}
+    return (New-BodyCapture '' 'uia_body_unavailable' $false $script:BodyCharLimit)
+}
 function Read-ArticleBody($Window) {
     Check-Stop;$element=Body-Element $Window
     if(!$element){return (New-BodyCapture '' 'content_element_missing' $false $script:BodyCharLimit)}
