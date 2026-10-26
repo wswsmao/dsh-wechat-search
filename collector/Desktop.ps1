@@ -8,7 +8,17 @@ function Element-Id($Root,[string]$Id){$Root.FindFirst([System.Windows.Automatio
 function Element-Name($Root,[string]$Name){$Root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,(New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::NameProperty),$Name))}
 function Element-Document($Root){$Root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,(New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::ControlTypeProperty),([System.Windows.Automation.ControlType]::Document)))}
 function Desktop-Pause([int]$Ms=300){$until=[datetime]::UtcNow.AddMilliseconds($Ms);while([datetime]::UtcNow -lt $until){Check-Stop;Start-Sleep -Milliseconds 100}}
-function Activate-Window([long]$Handle){Check-Stop;if(![WeChatNative]::IsWindow([IntPtr]$Handle)){throw 'WINDOW_LOST'};[void][WeChatNative]::SetForegroundWindow([IntPtr]$Handle);Desktop-Pause 150;if(![WeChatNative]::IsForeground($Handle)){throw 'FOCUS_UNAVAILABLE'}}
+function Activate-Window([long]$Handle){
+    Check-Stop
+    if(![WeChatNative]::IsWindow([IntPtr]$Handle)){throw 'WINDOW_LOST'}
+    [void][WeChatNative]::SetForegroundWindow([IntPtr]$Handle)
+    Desktop-Pause 150
+    if([WeChatNative]::IsForeground($Handle)){return}
+    # WeChat renders articles in child renderer windows, so the foreground window is often a sibling
+    # (WeChatAppEx) rather than the handle we activated. Accept focus when WeChat owns the foreground.
+    if([WeChatNative]::ForegroundBelongsToWeChat()){Desktop-Pause 150;return}
+    throw 'FOCUS_UNAVAILABLE'
+}
 function Click-Element($Element,[long]$Handle){
     if(!$Element){throw 'UI_ELEMENT_MISSING'};Check-Stop
     $p=$null;if($Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$p)){$p.Invoke();return}
