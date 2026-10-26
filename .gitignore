@@ -1,0 +1,18 @@
+# All durable task state, results, logs, desktop locks and tests stay local.
+.runtime/
+
+# Dependencies and caches.
+node_modules/
+.pnpm-store/
+coverage/
+.nyc_output/
+*.log
+*.tmp
+*.swp
+
+# OS and editor noise.
+.DS_Store
+Thumbs.db
+desktop.ini
+.idea/
+.vscode/

@@ -1,0 +1,4 @@
+- insert:
+    - id: local-wechat-search
+      name: '@local/dsh-wechat-search'
+      config: {}

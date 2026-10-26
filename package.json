@@ -1,0 +1,16 @@
+{
+  "name": "@local/dsh-wechat-search",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "Search public WeChat articles from the signed-in Windows desktop for the last 1–7 days, with durable jobs and full CSV/JSON exports.",
+  "license": "MIT",
+  "exports": {
+    ".": "./index.js",
+    "./locale/*.json": "./locale/*.json",
+    "./icon": "./icon.svg"
+  },
+  "files": ["index.js", "lib/*.js", "collector/*.ps1", "collector/*.cs", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "VALIDATION.md", "docs/*.md", "tests/*.js", "tests/*.ps1", ".gitignore"],
+  "scripts": { "test": "node --test tests/*.test.js" },
+  "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
+}
