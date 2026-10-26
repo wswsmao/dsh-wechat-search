@@ -1,4 +1,4 @@
-param([Parameter(Mandatory=$true)][string]$RequestPath,[Parameter(Mandatory=$true)][string]$JobDir)
+﻿param([Parameter(Mandatory=$true)][string]$RequestPath,[Parameter(Mandatory=$true)][string]$JobDir)
 $ErrorActionPreference='Stop'
 . ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Core.ps1'),[Text.Encoding]::UTF8)))
 . ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Body.ps1'),[Text.Encoding]::UTF8)))

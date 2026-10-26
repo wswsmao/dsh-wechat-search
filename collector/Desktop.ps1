@@ -1,4 +1,4 @@
-Add-Type -AssemblyName UIAutomationClient
+﻿Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Windows.Forms
 $nativeRoot=if($script:CollectorDir){$script:CollectorDir}else{$PSScriptRoot}
