@@ -1,4 +1,4 @@
-﻿Add-Type -AssemblyName UIAutomationClient
+Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Windows.Forms
 $nativeRoot=if($script:CollectorDir){$script:CollectorDir}else{$PSScriptRoot}
@@ -35,6 +35,9 @@ function Open-Search {
     if(![WeChatNative]::InteractiveDesktop()){throw 'DESKTOP_LOCKED'}
     $script:WasMinimized=[WeChatNative]::IsIconic([IntPtr]$script:MainHandle)
     [void][WeChatNative]::ShowWindow([IntPtr]$script:MainHandle,9);Activate-Window $script:MainHandle
+    # Minimized browser windows are not enumerable via UIA; restore them before searching.
+    foreach($q in Get-Process Weixin,WeChatAppEx -ErrorAction SilentlyContinue){if($q.MainWindowHandle -ne 0 -and [WeChatNative]::IsIconic($q.MainWindowHandle)){[void][WeChatNative]::ShowWindow($q.MainWindowHandle,9)}}
+    Desktop-Pause 400
     $w=Find-Search;if($w){return $w}
     # Qt main UI has no accessible controls. Use DPI-scaled relative anchors on the verified 4.x layout only.
     $r=New-Object WeChatNative+Rect;[void][WeChatNative]::GetWindowRect([IntPtr]$script:MainHandle,[ref]$r)
@@ -52,8 +55,19 @@ function Search-Query($Search,[string]$Keyword){
     Desktop-Pause 1000
     # Search entry may be 'all' or home; results have anonymous article tabs at document-relative anchor.
     $w=Find-Search;if(!$w){throw 'SEARCH_WINDOW_LOST'}
+    # Tab labels are not exposed via UIA names; probe each tab and verify via the document title.
     if($w.document.Current.Name -notmatch '文章'){
-        Activate-Window $w.handle;$r=$w.document.Current.BoundingRectangle;$dpi=[WeChatNative]::GetDpiForWindow([IntPtr]$w.handle)/96.0;[WeChatNative]::Click([int]($r.X+0.50*$r.Width),[int]($r.Y+90*$dpi));Desktop-Pause 700
+        Activate-Window $w.handle;$r=$w.document.Current.BoundingRectangle;$dpi=[WeChatNative]::GetDpiForWindow([IntPtr]$w.handle)/96.0
+        $tabs=@();$all=$w.document.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+        foreach($e in $all){if($e.Current.ClassName -like '*unit__item*' -and !$e.Current.BoundingRectangle.IsEmpty){$c=$e.Current.BoundingRectangle;if($c.X+$c.Width/2 -gt $r.X -and $c.X+$c.Width/2 -lt $r.X+$r.Width){$tabs+=$e}}}
+        $tabs=@($tabs|Sort-Object {$_.Current.BoundingRectangle.X})
+        foreach($t in $tabs){
+            $c=$t.Current.BoundingRectangle
+            [WeChatNative]::Click([int]($c.X+$c.Width/2),[int]($c.Y+$c.Height/2));Desktop-Pause 900
+            $w=Find-Search;if(!$w){break}
+            if($w.document.Current.Name -match '文章'){break}
+        }
+        if(!$w -or $w.document.Current.Name -notmatch '文章'){throw 'ARTICLE_TAB_UNAVAILABLE'}
     }
     for($i=0;$i -lt 50;$i++){Desktop-Pause 200;$w=Find-Search;if($w -and (Element-Name $w.root '最新')){break}}
     $latest=Element-Name $w.root '最新';if(!$latest){throw 'ARTICLE_LATEST_FILTER_UNAVAILABLE'}
