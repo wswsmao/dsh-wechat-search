@@ -96,7 +96,7 @@ function Read-ArticleHeader($Window,$Candidate,[datetimeoffset]$Reference){
     foreach($e in $all){if($e.Current.ClassName -match 'rich_media_meta_list_combine'){$label=$e.Current.Name};if($e.Current.AutomationId -eq 'js_wx_follow_nickname'){$account=$e.Current.Name}}
     if(!$label -or $label -notmatch '(\d{1,2})月(\d{1,2})日'){return $null};$month=[int]$Matches[1];$day=[int]$Matches[2]
     $estimated=$Reference.AddSeconds(-[double]$Candidate.age_seconds);$possible=@();foreach($year in @(($Reference.Year-1),$Reference.Year,($Reference.Year+1))){try{$d=[datetime]::new($year,$month,$day);$possible+=@{date=$d;distance=[math]::Abs(($d-$estimated.DateTime).TotalDays)}}catch{}}
-    $chosen=$possible|Sort-Object distance|Select-Object -First 1;if(!$chosen -or $chosen.distance -gt 2){return $null}
+    $chosen=$possible|Sort-Object {$_.distance}|Select-Object -First 1;if(!$chosen -or $chosen.distance -gt 2){return $null}
     if(!$account){$account=$Candidate.account};if((Normalize-Text $account) -cne (Normalize-Text $Candidate.account)){return $null}
     return @{title=$Window.document.Current.Name;author='';account=$account;date=$chosen.date.ToString('yyyy-MM-dd');published_at_iso=$null;publication_precision='day';content_type='text_share';date_year_basis='search relative date corroboration'}
 }
@@ -107,13 +107,15 @@ function Read-PublicUrl($Window){
     throw 'ARTICLE_PUBLIC_URL_UNAVAILABLE'
 }
 function Check-PageChallenge($Window){
+    # Article prose can mention verification; only classify a standalone challenge surface.
+    if((Element-Id $Window.root 'activity-name') -or (Element-Id $Window.root 'js_text_desc')){return}
     try{$text=$Window.document.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).DocumentRange.GetText(3000);if($text -match '访问过于频繁|操作过于频繁|请完成.*验证|安全验证|验证码|环境异常') {throw 'WECHAT_CHALLENGE'}}catch{if($_.Exception.Message -eq 'WECHAT_CHALLENGE'){throw}}
 }
 function Open-Candidate($Search,$Element,$Candidate,[datetimeoffset]$Reference){
     $beforeWindows=@(Browser-Windows);$before=@($beforeWindows|ForEach-Object{$_.handle});$beforeUrls=@{};foreach($w in $beforeWindows){try{$beforeUrls[$w.handle]=$w.document.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value}catch{}};Click-Element $Element $Search.handle
     for($i=0;$i -lt 60;$i++){
         Desktop-Pause 200
-        foreach($w in Browser-Windows){if($w.handle -eq $Search.handle){continue};if($w.handle -notin $before){$script:OwnedWindows[$w.handle]=$true};$changed=$false;try{$changed=$beforeUrls[$w.handle] -cne $w.document.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value}catch{};if($w.handle -in $before -and !$changed -and !$script:OwnedWindows.ContainsKey($w.handle)){continue};Check-PageChallenge $w;$header=Read-ArticleHeader $w $Candidate $Reference;if($header){return @{window=$w;record=$header}}}
+        foreach($w in Browser-Windows){if($w.handle -eq $Search.handle){continue};if($w.handle -notin $before){$script:OwnedWindows[$w.handle]=$true};$changed=$false;try{$changed=$beforeUrls[$w.handle] -cne $w.document.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value}catch{};if($w.handle -in $before -and !$changed){continue};Check-PageChallenge $w;$header=Read-ArticleHeader $w $Candidate $Reference;if($header){return @{window=$w;record=$header}}}
     }
     throw 'ARTICLE_HEADER_UNAVAILABLE'
 }
