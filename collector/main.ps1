@@ -158,7 +158,10 @@ try {
                 $membership=Get-WindowMembership $record $cutoff $reference
                 $script:ParallelStats.opened++
                 $detached=$false
-                if($includeBody -and $membership -eq $true){
+                # Detaching is only useful when a pool is actually used. With parallel_windows<=1 the
+                # article is read right away, so tearing adds window churn with no benefit and risks
+                # leaving a pooled window navigated to a different article.
+                if($includeBody -and $membership -eq $true -and $parallelWindowLimit -gt 1){
                     $detached=Tear-Off-Window $article.window
                     if($detached){$script:ParallelStats.teared++}
                 }
