@@ -38,6 +38,14 @@
 - 真实中文关键词 `量子计算` / 1天任务：采到9条后通过工具取消，终态cancelled；随后续采保留9条及原始时间窗。profile刷新导致工作器卸载时实际落盘interrupted、结果文件元数据同步正确；再次续采保留结果并处理53候选，9匹配、44范围外、failed=0；检测到搜索列表中的同一天旧文章存在精确时分逆序，诚实终态partial/RESULT_ORDERING_UNCERTAINTY，而不是取消后误称全量。该结果说明微信“最新”并非每次严格分钟倒序，保守标记是预期保护。
 - Windows桌面可用性检查与独占文件锁二次打开阻止检查通过；没有通过锁屏或注销用户来做破坏性测试。
 
+## 确定性日报扩展的隔离验证（2026-10-26）
+
+- Node 23/23通过：原17项全部保持，新增内部固定reference_time/布尔正文选项校验、旧工具schema不变、wait清理锁后返回、getResult完整私有正文、signal取消与续采、ctx.provide注册契约。
+- PowerShell正文测试通过：500,000字符截断明确、不可靠fallback=partial、缺正文=unavailable、微信会话链接参数剔除、正文身份缓存、status preview/CSV不泄露正文、普通/分享读取分支mock验证。
+- Collector所有PowerShell模块parser通过；Core、Desktop逻辑、续采回归与包元信息检查通过。
+- 扩展使用安装Cordis实际 `ctx.provide` effect-owned服务注册，未新增依赖或浏览器RPC。调用方通过 `inject: ['wechatSearch']` 获取内部服务。
+- 本次扩展由隔离子任务实现，未调用真实微信检索、网络或插件安装；新正文采集的真实网页内容范围与安装后service可见性，仍由主任务做端到端自验。旧元数据检索实测不能充当新正文已验证的证据。
+
 ## 明确限制
 
 - 无人为文章数量上限，但微信搜索索引外的全网完整性不保证，global_complete始终false。
