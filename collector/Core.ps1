@@ -20,7 +20,7 @@ function Get-ArticleIdentity([string]$Url) {
 }
 function Get-DateLabelAge([string]$Label,[datetimeoffset]$At) {
     if($Label -eq '刚刚'){return 0}
-    if($Label -match '^(\d+)(分钟|小时|天)前$') {return [int64]$Matches[1]*@{'分钟'=60;'小时'=3600;'天'=86400}[$Matches[2]]}
+    if($Label -match '^(\d+)(分钟|小时|天|周|个月|年)前$') {return [int64]$Matches[1]*@{'分钟'=60;'小时'=3600;'天'=86400;'周'=604800;'个月'=2592000;'年'=31536000}[$Matches[2]]}
     if($Label -match '^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$') { $dt=[datetime]::new([int]$Matches[1],[int]$Matches[2],[int]$Matches[3]);return ($At-[datetimeoffset]::new($dt,$At.Offset)).TotalSeconds }
     return $null
 }
@@ -30,7 +30,7 @@ function ConvertFrom-SearchText([string]$Text,[string[]]$Titles,[datetimeoffset]
     $items=@()
     for($i=0;$i -lt $Titles.Count;$i++){
         $end=if($i+1 -lt $positions.Count){$positions[$i+1]}else{$lines.Count};$label='';$account=''
-        for($j=$positions[$i]+1;$j -lt $end;$j++){ $line=$lines[$j].Trim();if($line -match '^(刚刚|\d+(分钟|小时|天)前|\d{4}[-/]\d{1,2}[-/]\d{1,2})$'){$label=$line;$account=$lines[$j-1].Trim();break} }
+        for($j=$positions[$i]+1;$j -lt $end;$j++){ $line=$lines[$j].Trim();if($line -match '^(刚刚|\d+(分钟|小时|天|周|个月|年)前|\d{4}[-/]\d{1,2}[-/]\d{1,2})$'){$label=$line;$account=$lines[$j-1].Trim();break} }
         if(!$label -or !$account){throw 'SEARCH_TEXT_DATE_MISSING'}
         $items+=@{title=$Titles[$i];account=$account;relative_date=$label;age_seconds=(Get-DateLabelAge $label $At);age_reference=$At.ToString('o');index=$i}
     }
