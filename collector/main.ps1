@@ -8,7 +8,7 @@ $packageRoot=Split-Path $PSScriptRoot -Parent;$runtimeRoot=Join-Path $packageRoo
 $resolvedJob=[IO.Path]::GetFullPath($JobDir);$allowedRoot=[IO.Path]::GetFullPath((Join-Path $runtimeRoot 'jobs'))+[IO.Path]::DirectorySeparatorChar
 if(!$resolvedJob.StartsWith($allowedRoot,[StringComparison]::OrdinalIgnoreCase)){throw 'Job directory must be inside plugin runtime jobs'}
 if(!$request.keyword -or $request.keyword -isnot [string] -or $request.keyword.Length -gt 200 -or $request.lookback_days -lt 1 -or $request.lookback_days -gt 7 -or [int]$request.lookback_days -ne $request.lookback_days){throw 'Invalid request'}
-$reference=[datetimeoffset]::Parse($request.reference_time);$cutoff=$reference.AddDays(-[int]$request.lookback_days)
+$reference=([datetimeoffset]::Parse($request.reference_time)).ToOffset([timespan]::FromHours(8));$cutoff=$reference.AddDays(-[int]$request.lookback_days)
 $timeoutMinutes=30;$delayMs=600;$maxRetries=2
 if($request.settings){if($request.settings.timeout_minutes){$timeoutMinutes=[int]$request.settings.timeout_minutes};if($null -ne $request.settings.delay_ms){$delayMs=[int]$request.settings.delay_ms};if($null -ne $request.settings.max_retries){$maxRetries=[int]$request.settings.max_retries}}
 $timeoutMinutes=[math]::Max(1,[math]::Min(120,$timeoutMinutes));$delayMs=[math]::Max(300,[math]::Min(10000,$delayMs));$maxRetries=[math]::Max(0,[math]::Min(3,$maxRetries))
@@ -16,8 +16,8 @@ $script:Deadline=[datetimeoffset]::Now.AddMinutes($timeoutMinutes)
 $cancelPath=Join-Path $JobDir 'cancel.flag';$checkpointPath=Join-Path $JobDir 'checkpoint.json';$statusPath=Join-Path $JobDir 'status.json'
 $resultsDir=Join-Path $JobDir 'results';[void][IO.Directory]::CreateDirectory($resultsDir)
 $files=@{json=Join-Path $resultsDir 'result.json';csv=Join-Path $resultsDir 'result.csv'}
-$script:Candidates=@();$script:Records=@();$script:Errors=@();$script:Processed=0;$script:Boundary=$false;$script:Exhausted=$false;$script:OrderingIssues=@();$script:LoadCounts=@();$script:Phase='initializing';$script:StopReason='';$script:Status='running'
-if(Test-Path -LiteralPath $checkpointPath){$cp=Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8|ConvertFrom-Json;$script:Records=@();foreach($r in $cp.records){$h=@{};foreach($p in $r.PSObject.Properties){$h[$p.Name]=$p.Value};$script:Records+=$h}}
+$script:Candidates=@();$script:Records=@();$script:Errors=@();$script:Processed=0;$script:Boundary=$false;$script:Exhausted=$false;$script:OrderingIssues=@();$script:LoadCounts=@();$script:Phase='initializing';$script:StopReason='';$script:Status='running';$script:PreviousCandidates=@()
+if(Test-Path -LiteralPath $checkpointPath){$cp=Get-Content -LiteralPath $checkpointPath -Raw -Encoding UTF8|ConvertFrom-Json;$script:PreviousCandidates=@($cp.candidates);$script:Candidates=@($cp.candidates);$script:Records=@();foreach($r in $cp.records){$h=@{};foreach($p in $r.PSObject.Properties){$h[$p.Name]=$p.Value};$script:Records+=$h}}
 function Check-Stop {
     if($script:Cleaning){return}
     if(Test-Path -LiteralPath $cancelPath){throw 'CANCELLED'}
@@ -71,6 +71,9 @@ try {
         if($stable -ge 3){$script:Exhausted=$true;break}
         Scroll-SearchEnd $search $uiItems
     }
+    # Preserve pending candidates from the previous attempt. Never erase missing work on resume.
+    $currentKeys=@{};foreach($c in $script:Candidates){$k=(Normalize-Text $c.title)+'|'+(Normalize-Text $c.account);$currentKeys[$k]=$true}
+    foreach($old in $script:PreviousCandidates){$k=(Normalize-Text $old.title)+'|'+(Normalize-Text $old.account);if(!$currentKeys.ContainsKey($k)){$h=@{title=$old.title;account=$old.account;relative_date=$old.relative_date;age_seconds=$old.age_seconds;index=-1};$script:Candidates+=$h;$currentKeys[$k]=$true}}
     $script:Phase='extracting';Publish-State
     $cached=@{};foreach($record in $script:Records){$key=(Normalize-Text $record.title)+'|'+(Normalize-Text $record.account);$cached[$key]=$record}
     $keyCounts=@{};foreach($c in $script:Candidates){$k=(Normalize-Text $c.title)+'|'+(Normalize-Text $c.account);if(!$keyCounts.ContainsKey($k)){$keyCounts[$k]=0};$keyCounts[$k]++}
@@ -93,7 +96,7 @@ try {
                 $script:Records+=$record;$cached[$key]=$record;$success=$true;Close-OwnedArticle $article.window;break
             }catch{
                 $failure=$_.Exception.Message
-                if($failure -match 'CANCELLED|TIME_BUDGET|DESKTOP_LOCKED|CHALLENGE|QUERY_CHANGED|SORT_CHANGED'){throw}
+                if($failure -match 'CANCELLED|TIME_BUDGET|DESKTOP_LOCKED|CHALLENGE|QUERY_CHANGED|SORT_CHANGED|FOCUS_UNAVAILABLE|FOCUS_CHANGED'){throw}
                 if($article){Close-OwnedArticle $article.window};Desktop-Pause 500
             }
         }
@@ -105,7 +108,7 @@ try {
     $script:Phase='finished';Publish-State
 }catch{
     $reason=$_.Exception.Message;$script:StopReason=$reason
-    if($reason -eq 'CANCELLED'){$script:Status='cancelled'}elseif($reason -match 'LOCKED|CHALLENGE|NOT_LOGGED|VERSION_UNSUPPORTED|SEARCH_UNAVAILABLE'){$script:Status='needs_user'}elseif($reason -eq 'TIME_BUDGET_EXCEEDED'){$script:Status='partial'}else{$script:Status='failed'}
+    if($reason -eq 'CANCELLED'){$script:Status='cancelled'}elseif($reason -match 'LOCKED|CHALLENGE|NOT_LOGGED|VERSION_UNSUPPORTED|SEARCH_UNAVAILABLE|FOCUS_UNAVAILABLE|FOCUS_CHANGED'){$script:Status='needs_user'}elseif($reason -eq 'TIME_BUDGET_EXCEEDED'){$script:Status='partial'}else{$script:Status='failed'}
     $script:Phase='stopped';try{Publish-State}catch{Write-Error 'Failed to persist worker state' -ErrorAction Continue}
 }finally{
     $script:Cleaning=$true

@@ -17,6 +17,8 @@ public static class WeChatNative {
     [DllImport("user32.dll")] static extern uint GetWindowThreadProcessId(IntPtr h, out uint pid);
     [DllImport("user32.dll")] public static extern bool SetForegroundWindow(IntPtr h);
     [DllImport("user32.dll")] public static extern IntPtr GetForegroundWindow();
+    [DllImport("user32.dll")] static extern IntPtr GetAncestor(IntPtr h, uint flags);
+    public static bool IsForeground(long h) { var target=new IntPtr(h); var f=GetForegroundWindow(); return f==target || f==GetAncestor(target,2); }
     [DllImport("user32.dll")] public static extern bool ShowWindow(IntPtr h, int n);
     [DllImport("user32.dll")] public static extern bool SetCursorPos(int x, int y);
     [DllImport("user32.dll")] static extern void mouse_event(uint flags,uint dx,uint dy,uint data,UIntPtr extra);

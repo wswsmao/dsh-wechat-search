@@ -7,7 +7,7 @@ function Element-Id($Root,[string]$Id){$Root.FindFirst([System.Windows.Automatio
 function Element-Name($Root,[string]$Name){$Root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,(New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::NameProperty),$Name))}
 function Element-Document($Root){$Root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,(New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::ControlTypeProperty),([System.Windows.Automation.ControlType]::Document)))}
 function Desktop-Pause([int]$Ms=300){$until=[datetime]::UtcNow.AddMilliseconds($Ms);while([datetime]::UtcNow -lt $until){Check-Stop;Start-Sleep -Milliseconds 100}}
-function Activate-Window([long]$Handle){Check-Stop;if(![WeChatNative]::IsWindow([IntPtr]$Handle)){throw 'WINDOW_LOST'};[void][WeChatNative]::SetForegroundWindow([IntPtr]$Handle);Desktop-Pause 150}
+function Activate-Window([long]$Handle){Check-Stop;if(![WeChatNative]::IsWindow([IntPtr]$Handle)){throw 'WINDOW_LOST'};[void][WeChatNative]::SetForegroundWindow([IntPtr]$Handle);Desktop-Pause 150;if(![WeChatNative]::IsForeground($Handle)){throw 'FOCUS_UNAVAILABLE'}}
 function Click-Element($Element,[long]$Handle){
     if(!$Element){throw 'UI_ELEMENT_MISSING'};Check-Stop
     $p=$null;if($Element.TryGetCurrentPattern([System.Windows.Automation.InvokePattern]::Pattern,[ref]$p)){$p.Invoke();return}
@@ -52,7 +52,7 @@ function Search-Query($Search,[string]$Keyword){
     # Search entry may be 'all' or home; results have anonymous article tabs at document-relative anchor.
     $w=Find-Search;if(!$w){throw 'SEARCH_WINDOW_LOST'}
     if($w.document.Current.Name -notmatch '文章'){
-        Activate-Window $w.handle;$r=$w.document.Current.BoundingRectangle;[WeChatNative]::Click([int]($r.X+0.50*$r.Width),[int]($r.Y+225));Desktop-Pause 700
+        Activate-Window $w.handle;$r=$w.document.Current.BoundingRectangle;$dpi=[WeChatNative]::GetDpiForWindow([IntPtr]$w.handle)/96.0;[WeChatNative]::Click([int]($r.X+0.50*$r.Width),[int]($r.Y+90*$dpi));Desktop-Pause 700
     }
     for($i=0;$i -lt 50;$i++){Desktop-Pause 200;$w=Find-Search;if($w -and (Element-Name $w.root '最新')){break}}
     $latest=Element-Name $w.root '最新';if(!$latest){throw 'ARTICLE_LATEST_FILTER_UNAVAILABLE'}
@@ -72,7 +72,9 @@ function Search-Items($Search){
 function Search-CopyText($Search){
     Activate-Window $Search.handle;$r=$Search.document.Current.BoundingRectangle
     [WeChatNative]::Click([int]($r.X+50),[int]($r.Y+[math]::Min(600,$r.Height-200)))
+    if(![WeChatNative]::IsForeground($Search.handle)){throw 'FOCUS_UNAVAILABLE'}
     [Windows.Forms.Clipboard]::Clear();[Windows.Forms.SendKeys]::SendWait('^a^c');Desktop-Pause 200
+    if(![WeChatNative]::IsForeground($Search.handle)){throw 'FOCUS_CHANGED'}
     $text=[Windows.Forms.Clipboard]::GetText();[Windows.Forms.SendKeys]::SendWait('{ESC}')
     return $text
 }
@@ -108,10 +110,10 @@ function Check-PageChallenge($Window){
     try{$text=$Window.document.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).DocumentRange.GetText(3000);if($text -match '访问过于频繁|操作过于频繁|请完成.*验证|安全验证|验证码|环境异常') {throw 'WECHAT_CHALLENGE'}}catch{if($_.Exception.Message -eq 'WECHAT_CHALLENGE'){throw}}
 }
 function Open-Candidate($Search,$Element,$Candidate,[datetimeoffset]$Reference){
-    $before=@((Browser-Windows)|ForEach-Object{$_.handle});Click-Element $Element $Search.handle
+    $beforeWindows=@(Browser-Windows);$before=@($beforeWindows|ForEach-Object{$_.handle});$beforeUrls=@{};foreach($w in $beforeWindows){try{$beforeUrls[$w.handle]=$w.document.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value}catch{}};Click-Element $Element $Search.handle
     for($i=0;$i -lt 60;$i++){
         Desktop-Pause 200
-        foreach($w in Browser-Windows){if($w.handle -eq $Search.handle){continue};if($w.handle -notin $before){$script:OwnedWindows[$w.handle]=$true};Check-PageChallenge $w;$header=Read-ArticleHeader $w $Candidate $Reference;if($header){return @{window=$w;record=$header}}}
+        foreach($w in Browser-Windows){if($w.handle -eq $Search.handle){continue};if($w.handle -notin $before){$script:OwnedWindows[$w.handle]=$true};$changed=$false;try{$changed=$beforeUrls[$w.handle] -cne $w.document.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value}catch{};if($w.handle -in $before -and !$changed -and !$script:OwnedWindows.ContainsKey($w.handle)){continue};Check-PageChallenge $w;$header=Read-ArticleHeader $w $Candidate $Reference;if($header){return @{window=$w;record=$header}}}
     }
     throw 'ARTICLE_HEADER_UNAVAILABLE'
 }

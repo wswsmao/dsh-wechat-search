@@ -85,6 +85,33 @@ test('cancel flag is durable and termination targets only managed worker', async
   assert.equal(f.calls.length, 1);
 });
 
+test('cancel racing worker completion cannot overwrite terminal status or leave BUSY', async (t) => {
+  const f = await fixture(t); const receipt = await f.manager.start(input); const p = f.manager.paths(receipt.job_id);
+  const original = fs.writeFile; let injected = false;
+  fs.writeFile = async (file, ...args) => {
+    if (file === p.cancel && !injected) {
+      injected = true;
+      const state = await readJson(p.status);
+      await writeJsonAtomic(p.status, { ...state, status: 'complete', phase: 'complete', coverage: { scope_complete: true, search_boundary_reached: true, global_complete: false } });
+      f.handles[0].resolve({ exitCode: 0, signal: null });
+    }
+    return original.call(fs, file, ...args);
+  };
+  try {
+    const cancelled = await f.manager.cancel(receipt.job_id);
+    assert.equal(cancelled.status, 'complete'); assert.equal((await readJson(p.status)).status, 'complete');
+    assert.equal(f.handles[0].terminated, 0);
+    await f.manager.start(input); assert.equal(f.calls.length, 2);
+  } finally { fs.writeFile = original; }
+});
+
+test('cancel derives cancelling from flag without mutating live worker status', async (t) => {
+  const f = await fixture(t); const receipt = await f.manager.start(input); const p = f.manager.paths(receipt.job_id);
+  await fs.writeFile(p.cancel, 'cancel requested');
+  assert.equal((await f.manager.status(receipt.job_id)).status, 'cancelling');
+  assert.equal((await readJson(p.status)).status, 'starting');
+});
+
 test('resume keeps reference time and records, clears cancellation flag', async (t) => {
   const f = await fixture(t); const receipt = await f.manager.start(input); const p = f.manager.paths(receipt.job_id);
   await writeJsonAtomic(p.json, { records: [{ title: 'retained' }] });
@@ -126,6 +153,36 @@ test('startup rehydrates dead owners as interrupted but preserves live foreign o
   const state = await readJson(p.status); await writeJsonAtomic(p.status, { ...state, status: 'running', worker_pid: 4321 });
   const third = new WechatTaskManager({ packageDir: f.dir, subprocess: f.subprocess, processAlive: (pid) => pid === 4321 }); await third.ready;
   assert.equal((await third.status(receipt.job_id)).status, 'running'); await assert.rejects(() => third.start(input), { code: 'BUSY' }); await third.dispose();
+});
+
+test('same Host PID old generation without live worker rehydrates; live worker is protected', async (t) => {
+  const f = await fixture(t); const receipt = await f.manager.start(input); const p = f.manager.paths(receipt.job_id);
+  const sameHost = new WechatTaskManager({ packageDir: f.dir, subprocess: f.subprocess, ownerPid: f.manager.ownerPid, processAlive: (pid) => pid === f.manager.ownerPid });
+  await sameHost.ready; assert.equal((await sameHost.status(receipt.job_id)).status, 'interrupted'); await sameHost.dispose();
+  const old = await readJson(p.status); await writeJsonAtomic(p.status, { ...old, status: 'running', worker_pid: 4567 });
+  const liveWorker = new WechatTaskManager({ packageDir: f.dir, subprocess: f.subprocess, ownerPid: f.manager.ownerPid, processAlive: (pid) => pid === f.manager.ownerPid || pid === 4567 });
+  await liveWorker.ready; assert.equal((await liveWorker.status(receipt.job_id)).status, 'running'); await liveWorker.dispose();
+});
+
+test('all pre-spawn failures produce durable failed state and do not leave BUSY', async (t) => {
+  for (const stage of ['environment', 'resolve', 'spawn']) {
+    const f = await fixture(t);
+    if (stage === 'environment') f.subprocess.terminalEnvironment = async () => { throw new Error('environment failed'); };
+    if (stage === 'resolve') f.subprocess.resolveExecutable = async () => { throw new Error('resolve failed'); };
+    if (stage === 'spawn') f.subprocess.spawn = () => { throw new Error('spawn failed'); };
+    await assert.rejects(() => f.manager.start(input));
+    const rows = (await f.manager.list()).jobs; assert.equal(rows[0].status, 'failed');
+    await assert.rejects(() => f.manager.start(input), (error) => error.code !== 'BUSY');
+  }
+});
+
+test('manager terminal fallback synchronizes exported job metadata while preserving article rows', async (t) => {
+  const f = await fixture(t); const receipt = await f.manager.start(input); const p = f.manager.paths(receipt.job_id);
+  await writeJsonAtomic(p.json, { job: { id: receipt.job_id, status: 'running', coverage: { scope_complete: true, global_complete: true } }, records: [{ title: 'keep', url: 'https://mp.weixin.qq.com/s/fxT7NxktgU8PMeHXY28ftQ' }], coverage: { scope_complete: true, global_complete: true } });
+  await f.manager.cancel(receipt.job_id);
+  const result = await readJson(p.json);
+  assert.equal(result.job.status, 'cancelled'); assert.equal(result.job.coverage.scope_complete, false); assert.equal(result.coverage.global_complete, false);
+  assert.equal(result.records[0].title, 'keep');
 });
 
 test('non-Windows rejects cleanly and writes durable failed state', async (t) => {
