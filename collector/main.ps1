@@ -1,6 +1,6 @@
 ﻿param([Parameter(Mandatory=$true)][string]$RequestPath,[Parameter(Mandatory=$true)][string]$JobDir)
 $ErrorActionPreference='Stop'
-. (Join-Path $PSScriptRoot 'Core.ps1')
+. ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Core.ps1'),[Text.Encoding]::UTF8)))
 $script:OwnedWindows=@{};$script:MainHandle=0;$script:SavedClipboard=$null;$script:WasMinimized=$false
 $script:OriginalForeground=0;$script:Cleaning=$false;$lock=$null
 $request=Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8|ConvertFrom-Json
@@ -39,7 +39,8 @@ function Publish-State {
 try {
     [void][IO.Directory]::CreateDirectory($runtimeRoot)
     try{$lock=[IO.File]::Open((Join-Path $runtimeRoot 'desktop.lock'),[IO.FileMode]::OpenOrCreate,[IO.FileAccess]::ReadWrite,[IO.FileShare]::None)}catch{throw 'DESKTOP_BUSY'}
-    . (Join-Path $PSScriptRoot 'Desktop.ps1')
+    $script:CollectorDir=$PSScriptRoot
+    . ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Desktop.ps1'),[Text.Encoding]::UTF8)))
     $script:OriginalForeground=[WeChatNative]::GetForegroundWindow().ToInt64()
     $script:SavedClipboard=[Windows.Forms.Clipboard]::GetDataObject()
     $version=(Get-Process Weixin -ErrorAction SilentlyContinue|Where-Object{$_.MainWindowHandle -ne 0}|Select-Object -First 1).Path

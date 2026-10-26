@@ -1,7 +1,8 @@
 ﻿Add-Type -AssemblyName UIAutomationClient
 Add-Type -AssemblyName UIAutomationTypes
 Add-Type -AssemblyName System.Windows.Forms
-Add-Type -Path (Join-Path $PSScriptRoot 'Native.cs')
+$nativeRoot=if($script:CollectorDir){$script:CollectorDir}else{$PSScriptRoot}
+Add-Type -Path (Join-Path $nativeRoot 'Native.cs')
 [void][WeChatNative]::SetProcessDpiAwarenessContext([IntPtr](-4));[void][WeChatNative]::SetThreadDpiAwarenessContext([IntPtr](-4))
 function Element-Id($Root,[string]$Id){$Root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,(New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::AutomationIdProperty),$Id))}
 function Element-Name($Root,[string]$Name){$Root.FindFirst([System.Windows.Automation.TreeScope]::Descendants,(New-Object System.Windows.Automation.PropertyCondition ([System.Windows.Automation.AutomationElement]::NameProperty),$Name))}
@@ -108,7 +109,7 @@ function Read-PublicUrl($Window){
 }
 function Check-PageChallenge($Window){
     # Article prose can mention verification; only classify a standalone challenge surface.
-    if((Element-Id $Window.root 'activity-name') -or (Element-Id $Window.root 'js_text_desc')){return}
+    if((Element-Id $Window.root 'activity-name') -or (Element-Id $Window.root 'js_text_desc') -or (Element-Id $Window.root 'weixin-search-input')){return}
     try{$text=$Window.document.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).DocumentRange.GetText(3000);if($text -match '访问过于频繁|操作过于频繁|请完成.*验证|安全验证|验证码|环境异常') {throw 'WECHAT_CHALLENGE'}}catch{if($_.Exception.Message -eq 'WECHAT_CHALLENGE'){throw}}
 }
 function Open-Candidate($Search,$Element,$Candidate,[datetimeoffset]$Reference){
