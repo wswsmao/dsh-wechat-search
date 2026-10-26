@@ -29,7 +29,20 @@ function Read-Opened-Batch($Batch,$Cutoff,$Reference,[bool]$IncludeBody,$Runtime
         Check-Stop
         $record=$entry.record;$window=$entry.window
         try{
+            # If tearing the tab off failed, WeChat may have navigated this same window to another
+            # article. Reading it then would attach the wrong body to this record, so verify first.
             if($IncludeBody -and $entry.membership -eq $true){
+                $liveTitle=''
+                try{$liveTitle=Read-PublicUrl $window}catch{}
+                try{
+                    $liveId=Element-Id $window.root 'activity-name'
+                    if($liveId){
+                        $liveTitle=$liveId.Current.Name
+                        if((Normalize-Text $liveTitle) -cne (Normalize-Text $record.title)){
+                            throw "WINDOW_NAVIGATED_AWAY expected='$($record.title)' actual='$liveTitle'"
+                        }
+                    }
+                }catch{if($_.Exception.Message -match 'WINDOW_NAVIGATED_AWAY'){throw}}
                 $body=$null
                 $body=Get-BodyCache $record.identity $RuntimeRoot
                 if(!$body){

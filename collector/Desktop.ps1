@@ -173,8 +173,10 @@ function Tear-Off-Window($Window){
         $before=@(Browser-Windows|ForEach-Object{$_.handle})
         Activate-Window $handle
         # Windows drift after each detach: MoveWindow/SetWindowPos report success but do not actually
-        # reposition these windows, so a fixed coordinate stops matching. Re-measure on retry instead.
-        for($attempt=0;$attempt -lt 2;$attempt++){
+        # reposition these windows, so a fixed coordinate stops matching. Re-measure on every attempt.
+        # The drag distance is escalated because the required tear-off threshold varies with window size.
+        $distances=@(760,1100,1500)
+        for($attempt=0;$attempt -lt $distances.Count;$attempt++){
             if($attempt -gt 0){
                 Desktop-Pause 400
                 $again=Window-Rect $handle
@@ -188,7 +190,8 @@ function Tear-Off-Window($Window){
                 if($grabX -lt $again.Left+20){$grabX=[int]($again.Left+20)}
                 Activate-Window $handle
             }
-            Native-Drag -FromX $grabX -FromY $grabY -ToX ($grabX+300) -ToY ($grabY+760) -Steps 20 -StepMs 30
+            $d=$distances[$attempt]
+            Native-Drag -FromX $grabX -FromY $grabY -ToX ($grabX+[int]($d*0.4)) -ToY ($grabY+$d) -Steps 24 -StepMs 28
             $after=@(Browser-Windows|ForEach-Object{$_.handle})
             $detached=$after|Where-Object{$_ -notin $before}|Select-Object -First 1
             if($detached){$script:OwnedWindows[$detached]=$true;return $true}
