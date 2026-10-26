@@ -156,11 +156,22 @@ try {
                 $record=$article.record;$record.url=Read-PublicUrl $article.window;$record.identity=Get-ArticleIdentity $record.url;$record.captured_at=[datetimeoffset]::Now.ToString('o');$record.source='logged-in WeChat desktop';$record.query=$request.keyword
                 if($record.published_at_iso){$dt=[datetimeoffset]::Parse($record.published_at_iso);if($lastExact -and $dt -gt $lastExact){$script:OrderingIssues+=@{type='exact_date_inversion';index=$candidate.index}};$lastExact=$dt}
                 $membership=Get-WindowMembership $record $cutoff $reference
-                # Stage 1 does not read bodies: it detaches the window so several articles stay open at once.
-                [void]$opened.Add(@{window=$article.window;record=$record;candidate=$candidate;key=$key;membership=$membership})
                 $script:ParallelStats.opened++
+                $detached=$false
                 if($includeBody -and $membership -eq $true){
-                    if(Tear-Off-Window $article.window){$script:ParallelStats.teared++}
+                    $detached=Tear-Off-Window $article.window
+                    if($detached){$script:ParallelStats.teared++}
+                }
+                if($detached){
+                    # Stage 1 keeps detached windows open so several articles can be read together.
+                    [void]$opened.Add(@{window=$article.window;record=$record;candidate=$candidate;key=$key;membership=$membership})
+                }else{
+                    # Tear-off failed: this window is still the active one and the next click would
+                    # navigate it to another article. Read and close it now so the body cannot be
+                    # swapped underneath the record.
+                    $single=New-Object System.Collections.ArrayList
+                    [void]$single.Add(@{window=$article.window;record=$record;candidate=$candidate;key=$key;membership=$membership})
+                    Read-Opened-Batch $single $cutoff $reference $includeBody $runtimeRoot ([ref]$cached)
                 }
                 $success=$true
                 break
