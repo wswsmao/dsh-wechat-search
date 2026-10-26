@@ -22,6 +22,7 @@
 - Inspect确认live条目 `include:local-wechat-search`。
 - Inspect确认 `wechat_search`、`wechat_search_job` 实际工具注册，搜索schema只有keyword/lookback_days。
 - 安装日志内有既有可选cpu-features编译器探测失败；本插件无该依赖/安装脚本，整体安装exit0、application applied。不会误称该可选依赖编译成功。
+- 使用无桌面工作进程的隔离状态夹具，已通过安装工具实际验证：磁盘running+cancel.flag对外派生cancelling而磁盘不被覆盖，证明取消竞态修复后的Host代际已生效。夹具结束后已置终态，未影响真实任务。
 - 双语meta与原创SVG资源已检查；插件管理UI中的实际图标渲染未浏览器视觉核验，不声称视觉验证完成。
 
 ## 真实任务自验进度
