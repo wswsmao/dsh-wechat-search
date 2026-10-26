@@ -1,4 +1,4 @@
-﻿param([Parameter(Mandatory=$true)][string]$RequestPath,[Parameter(Mandatory=$true)][string]$JobDir)
+param([Parameter(Mandatory=$true)][string]$RequestPath,[Parameter(Mandatory=$true)][string]$JobDir)
 $ErrorActionPreference='Stop'
 . ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Core.ps1'),[Text.Encoding]::UTF8)))
 . ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Body.ps1'),[Text.Encoding]::UTF8)))
@@ -13,9 +13,9 @@ $reference=([datetimeoffset]::Parse($request.reference_time)).ToOffset([timespan
 if($reference -gt [datetimeoffset]::Now){throw 'Future reference_time is not allowed'}
 if($null -ne $request.include_body -and $request.include_body -isnot [bool]){throw 'include_body must be boolean'}
 $includeBody=($request.include_body -eq $true)
-$timeoutMinutes=30;$delayMs=600;$maxRetries=2
+$timeoutMinutes=30;$delayMs=250;$maxRetries=1
 if($request.settings){if($request.settings.timeout_minutes){$timeoutMinutes=[int]$request.settings.timeout_minutes};if($null -ne $request.settings.delay_ms){$delayMs=[int]$request.settings.delay_ms};if($null -ne $request.settings.max_retries){$maxRetries=[int]$request.settings.max_retries}}
-$timeoutMinutes=[math]::Max(1,[math]::Min(120,$timeoutMinutes));$delayMs=[math]::Max(300,[math]::Min(10000,$delayMs));$maxRetries=[math]::Max(0,[math]::Min(3,$maxRetries))
+$timeoutMinutes=[math]::Max(1,[math]::Min(120,$timeoutMinutes));$delayMs=[math]::Max(120,[math]::Min(10000,$delayMs));$maxRetries=[math]::Max(0,[math]::Min(3,$maxRetries))
 $script:Deadline=[datetimeoffset]::Now.AddMinutes($timeoutMinutes)
 $cancelPath=Join-Path $JobDir 'cancel.flag';$checkpointPath=Join-Path $JobDir 'checkpoint.json';$statusPath=Join-Path $JobDir 'status.json'
 $resultsDir=Join-Path $JobDir 'results';[void][IO.Directory]::CreateDirectory($resultsDir)
