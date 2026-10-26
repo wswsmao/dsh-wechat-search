@@ -15,4 +15,7 @@ $r=Read-ArticleHeader $w $c $ref
 if(!$r -or $r.date -ne '2026-10-23' -or $r.publication_precision -ne 'day' -or $r.author -ne ''){throw 'Text share parsing regression'}
 if(!(Get-WindowMembership $r $ref.AddDays(-7) $ref)){throw 'Share membership regression'}
 $c=@{title='share text';account='other account';age_seconds=172800};if($null -ne (Read-ArticleHeader $w $c $ref)){throw 'Share account verification regression'}
+function Element-Id($Root,$Id){if($Id -eq 'weixin-search-input'){return @{found=$true}};return $null}
+$bad=@{root=@{};document=[pscustomobject]@{}}
+Check-PageChallenge $bad # must not attempt to read result prose/keyword containing verification terms.
 Write-Output 'PASS: native compile, year-array precedence, share header parsing, identity mismatch and day membership'

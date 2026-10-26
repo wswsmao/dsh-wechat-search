@@ -10,7 +10,7 @@
     "./locale/*.json": "./locale/*.json",
     "./icon": "./icon.svg"
   },
-  "files": ["index.js", "lib/*.js", "collector/*.ps1", "collector/*.cs", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "VALIDATION.md", "docs/*.md", "tests/*.js", "tests/*.ps1", ".gitignore"],
+  "files": ["index.js", "lib/*.js", "collector/*.ps1", "collector/*.cs", "cordis.patch.yml", "locale/*.json", "icon.svg", "README.md", "VALIDATION.md", "docs/*.md", "tests/*.js", "tests/*.mjs", "tests/*.ps1", ".gitignore", ".gitattributes"],
   "scripts": { "test": "node --test tests/*.test.js" },
   "dsh": { "bundle": { "patch": "./cordis.patch.yml" } }
 }
