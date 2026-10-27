@@ -28,8 +28,26 @@ function Click-Element($Element,[long]$Handle){
 function Browser-Windows {
     $ids=[uint32[]]@((Get-Process Weixin,WeChatAppEx -ErrorAction SilentlyContinue).Id)
     foreach($h in [WeChatNative]::BrowserHandles($script:MainHandle,$ids)){
+        # Skip windows this worker already identified as non-article (mini-program etc.) and hid.
+        if($script:IgnoredWindows -and $script:IgnoredWindows.ContainsKey([long]$h)){continue}
         try{$root=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$h);$doc=Element-Document $root;if($doc){@{handle=$h;root=$root;document=$doc}}}catch{}
     }
+}
+# A result row is only safe to open when it is a WeChat article. Mini-program and other cards share
+# the same list class, and opening one raises an app surface that can contain consent buttons.
+# Reading the row's own structure is the only guard: never click a row whose type is unproven.
+function Test-ArticleItem($Element){
+    if(!$Element){return $false}
+    try{
+        $sub=$Element.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+        foreach($s in $sub){ if($s.Current.ClassName -like '*article__title*'){return $true} }
+    }catch{}
+    return $false
+}
+# An opened surface counts as an article only when it exposes the article body markers.
+function Test-ArticleWindow($Window){
+    if(!$Window){return $false}
+    try{ return [bool]((Element-Id $Window.root 'activity-name') -or (Element-Id $Window.root 'js_text_desc')) }catch{ return $false }
 }
 function Find-Search {
     foreach($w in Browser-Windows){try{if(Element-Id $w.root 'weixin-search-input'){return $w}}catch{}}
@@ -186,10 +204,22 @@ function Check-PageChallenge($Window){
     try{$text=$Window.document.GetCurrentPattern([System.Windows.Automation.TextPattern]::Pattern).DocumentRange.GetText(3000);if($text -match '访问过于频繁|操作过于频繁|请完成.*验证|安全验证|验证码|环境异常') {throw 'WECHAT_CHALLENGE'}}catch{if($_.Exception.Message -eq 'WECHAT_CHALLENGE'){throw}}
 }
 function Open-Candidate($Search,$Element,$Candidate,[datetimeoffset]$Reference){
+    # Refuse unproven row types before any click: a mini-program card would open an app surface.
+    if(!(Test-ArticleItem $Element)){throw 'NON_ARTICLE_RESULT'}
     $beforeWindows=@(Browser-Windows);$before=@($beforeWindows|ForEach-Object{$_.handle});$beforeUrls=@{};foreach($w in $beforeWindows){try{$beforeUrls[$w.handle]=$w.document.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value}catch{}};Click-Element $Element $Search.handle
     for($i=0;$i -lt 60;$i++){
         Desktop-Pause 200
-        foreach($w in Browser-Windows){if($w.handle -eq $Search.handle){continue};if($w.handle -notin $before){$script:OwnedWindows[$w.handle]=$true};$changed=$false;try{$changed=$beforeUrls[$w.handle] -cne $w.document.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value}catch{};if($w.handle -in $before -and !$changed){continue};Check-PageChallenge $w;$header=Read-ArticleHeader $w $Candidate $Reference;if($header){return @{window=$w;record=$header}}}
+        foreach($w in Browser-Windows){if($w.handle -eq $Search.handle){continue};if($w.handle -notin $before){$script:OwnedWindows[$w.handle]=$true};$changed=$false;try{$changed=$beforeUrls[$w.handle] -cne $w.document.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value}catch{};if($w.handle -in $before -and !$changed){continue}
+            Check-PageChallenge $w
+            # A surface without article markers is not an article (mini-program, app page). Hide it and
+            # stop immediately: never click inside it, and never retry this row.
+            if(!(Test-ArticleWindow $w)){
+                if(!$script:IgnoredWindows){$script:IgnoredWindows=@{}}
+                $script:IgnoredWindows[[long]$w.handle]=$true
+                try{[void][WeChatNative]::ShowWindow([IntPtr]$w.handle,0)}catch{}
+                throw 'NON_ARTICLE_SURFACE'
+            }
+            $header=Read-ArticleHeader $w $Candidate $Reference;if($header){return @{window=$w;record=$header}}}
     }
     throw 'ARTICLE_HEADER_UNAVAILABLE'
 }

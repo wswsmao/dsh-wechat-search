@@ -2,7 +2,7 @@
 $ErrorActionPreference='Stop'
 . ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Core.ps1'),[Text.Encoding]::UTF8)))
 . ([scriptblock]::Create([IO.File]::ReadAllText((Join-Path $PSScriptRoot 'Body.ps1'),[Text.Encoding]::UTF8)))
-$script:OwnedWindows=@{};$script:MainHandle=0;$script:SavedClipboard=$null;$script:WasMinimized=$false
+$script:OwnedWindows=@{};$script:IgnoredWindows=@{};$script:Skipped=@();$script:MainHandle=0;$script:SavedClipboard=$null;$script:WasMinimized=$false
 $script:OriginalForeground=0;$script:Cleaning=$false;$lock=$null
 $request=Get-Content -LiteralPath $RequestPath -Raw -Encoding UTF8|ConvertFrom-Json
 $packageRoot=Split-Path $PSScriptRoot -Parent;$runtimeRoot=Join-Path $packageRoot '.runtime'
@@ -80,9 +80,13 @@ function Publish-State {
     $matches=@($matches|Sort-Object @{Expression={if($_.published_at_iso){$_.published_at_iso}else{$_.date}};Descending=$true})
     $bodyIncomplete=@($matches|Where-Object{$includeBody -and !$_.body_complete})
     $bodyRead=@($matches|Where-Object{$_.body_text})
-    $scopeComplete=($script:Status -eq 'complete' -and ($script:Boundary -or $script:Exhausted) -and !$script:Errors.Count -and !$uncertain.Count -and !$script:OrderingIssues.Count -and !$bodyIncomplete.Count)
+    # Skipping a labelled non-article row is correct behaviour, not a failure: it must not be reported
+    # as an extraction error, and it must not block scope completion.
+    $script:SkippedNonArticle=$script:Skipped.Count
+    $realErrors=$script:Errors.Count
+    $scopeComplete=($script:Status -eq 'complete' -and ($script:Boundary -or $script:Exhausted) -and !$realErrors -and !$uncertain.Count -and !$script:OrderingIssues.Count -and !$bodyIncomplete.Count)
     $coverage=@{search_boundary_reached=$script:Boundary;search_exhausted=$script:Exhausted;scope_complete=$scopeComplete;global_complete=$false;body_requested=$includeBody;body_complete=($includeBody -and $script:Phase -eq 'finished' -and $script:Processed -ge $script:Candidates.Count -and !$bodyIncomplete.Count);scope='WeChat search-visible latest results; no keyword expansion; no artificial result count limit'}
-    $summary=@{id=$request.id;keyword=$request.keyword;lookback_days=[int]$request.lookback_days;status=$script:Status;phase=$script:Phase;started_at=$request.reference_time;reference_time=$reference.ToString('o');cutoff_time=$cutoff.ToString('o');updated_at=[datetimeoffset]::Now.ToString('o');worker_pid=$PID;manager_owner_pid=$request.manager_owner_pid;manager_owner_token=$request.manager_owner_token;include_body=$includeBody;counts=@{discovered=$script:Candidates.Count;processed=$script:Processed;matched=$matches.Count;failed=$script:Errors.Count;outside=$outside.Count;date_uncertain=$uncertain.Count;body_read=$bodyRead.Count;body_incomplete=$bodyIncomplete.Count};stop_reason=$script:StopReason;coverage=$coverage;files=$files;preview=@($matches|Select-Object -First 5|ForEach-Object{Get-PublicRecord $_});errors=@($script:Errors);ordering_issues=@($script:OrderingIssues);load_counts=@($script:LoadCounts)}
+    $summary=@{id=$request.id;keyword=$request.keyword;lookback_days=[int]$request.lookback_days;status=$script:Status;phase=$script:Phase;started_at=$request.reference_time;reference_time=$reference.ToString('o');cutoff_time=$cutoff.ToString('o');updated_at=[datetimeoffset]::Now.ToString('o');worker_pid=$PID;manager_owner_pid=$request.manager_owner_pid;manager_owner_token=$request.manager_owner_token;include_body=$includeBody;counts=@{discovered=$script:Candidates.Count;processed=$script:Processed;matched=$matches.Count;failed=$script:Errors.Count;outside=$outside.Count;date_uncertain=$uncertain.Count;body_read=$bodyRead.Count;body_incomplete=$bodyIncomplete.Count};stop_reason=$script:StopReason;coverage=$coverage;files=$files;preview=@($matches|Select-Object -First 5|ForEach-Object{Get-PublicRecord $_});errors=@($script:Errors);skipped_non_article=@($script:Skipped);ordering_issues=@($script:OrderingIssues);load_counts=@($script:LoadCounts)}
     $result=@{schema_version=1;job=$summary;records=@($matches);outside_records=@($outside);date_uncertain_records=@($uncertain);errors=@($script:Errors)}
     Write-AtomicJson $files.json $result;Write-ResultCsv $files.csv $matches
     Write-AtomicJson $checkpointPath @{keyword=$request.keyword;reference_time=$reference.ToString('o');candidates=@($script:Candidates);pending_candidates=@($script:PreviousCandidates);records=@($script:Records);errors=@($script:Errors);ordering_issues=@($script:OrderingIssues)}
@@ -156,6 +160,12 @@ try {
         Check-Stop;$script:Processed++;$key=(Normalize-Text $candidate.title)+'|'+(Normalize-Text $candidate.account)
         if($openKeys -and !$openKeys.ContainsKey($key)){continue}
         if($candidate.index -lt 0 -and $cached.ContainsKey($key) -and $keyCounts[$key] -eq 1 -and (!$includeBody -or $cached[$key].body_complete)){continue}
+        # WeChat labels non-article rows (mini-program, 视频号) in the account field itself. Opening one
+        # raises an app surface that may hold consent buttons, so skip before any click.
+        if($candidate.account -match '小程序|视频号|公众号名片'){
+            $script:Skipped+=@{title=$candidate.title;account=$candidate.account;index=$candidate.index;reason='NON_ARTICLE_ACCOUNT'}
+            continue
+        }
         # Current candidates are opened even on resume: title/account alone cannot prove article identity.
         $success=$false;$failure='';$article=$null
         for($attempt=0;$attempt -le $maxRetries;$attempt++){
@@ -180,6 +190,9 @@ try {
             }catch{
                 $failure=$_.Exception.Message
                 if($failure -match 'CANCELLED|TIME_BUDGET|DESKTOP_LOCKED|CHALLENGE|QUERY_CHANGED|SORT_CHANGED|FOCUS_UNAVAILABLE|FOCUS_CHANGED'){throw}
+                # A row or surface proven not to be an article must never be clicked again: stop this
+                # candidate instead of retrying, so nothing can interact with a mini-program page.
+                if($failure -match '^NON_ARTICLE_(RESULT|SURFACE)$'){$script:Skipped+=@{title=$candidate.title;account=$candidate.account;index=$candidate.index;reason=$failure};break}
                 if($article){Close-OwnedArticle $article.window};Desktop-Pause 500
             }
         }
