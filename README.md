@@ -96,6 +96,25 @@ powershell.exe -NoProfile -STA -ExecutionPolicy Bypass -File collector/main.ps1 
 - `tests/core.tests.ps1`覆盖PowerShell解析、日期边界、日精度不确定性、公开URL、重名结果、CSV和原子状态。
 - 真实微信检索、自验报告见 `VALIDATION.md`，其中明确记录实际通过和未验证的部分。
 
+## 🔴 红线与实测教训
+
+以下来自真实事故，违反会造成不可恢复的后果。
+
+1. **绝不重启、绝不退出 `Weixin.exe`**：无人值守时无法重新登录，微信一退整个日报永久瘫痪。
+   微信崩溃/掉线/验证挑战 → **停止采集并标记，等用户处理**，绝不尝试重启。
+2. **绝不 kill `WeChatAppEx`**：会摧毁搜索渲染窗口，只能靠重启微信恢复——而重启被禁止。
+3. **改 `.ps1` 后必须写回 UTF-8 BOM**：Windows PowerShell 5.1 需要 BOM 才能解析中文，
+   否则脚本直接崩溃（`worker_exited_without_terminal_status`）。已踩多次。
+4. **搜索窗口必须在主屏**（X ≥ 0）：窗口位于副屏（负坐标）时程序点击无效，
+   表现为 `ARTICLE_TAB_UNAVAILABLE` / `FOCUS_UNAVAILABLE`。
+5. **只打开公众号文章**：搜索结果里混有小程序/视频号卡片（class 相同）。
+   已按 account 标签、行结构、窗口标记三重校验拦截；命中非文章立即隐藏且不重试——
+   小程序页面可能含"同意"按钮，绝不能点。
+6. **并行 tear-off 已删除**：实测丢失约 50% 文章（撕出的窗口仍被微信导航到别处，
+   正文错配）。当前为纯串行（`parallel_windows` 参数已移除），改动前务必重读此条。
+7. **焦点判定**：`IsForeground(主窗)` 对微信恒 false（文章渲染在 WeChatAppEx 子窗），
+   已用 `ForegroundBelongsToWeChat()` 兜底，勿改回原判定。
+
 ## 安全维护
 
 PowerShell脚本需UTF-8 BOM兼容Windows PowerShell5.1。不要日志输出完整带会话参数的导航URL，也不要把凭据写入结果、测试夹具或Git。插件通过Harness受管理的子进程启动采集器，停用/卸载只停止自己的采集进程，不杀微信。
