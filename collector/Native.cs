@@ -30,8 +30,6 @@ public static class WeChatNative {
     [DllImport("user32.dll")] static extern bool SwitchDesktop(IntPtr h);
     public static bool InteractiveDesktop() { var h=InputDesktop(0,false,0x0100); if(h==IntPtr.Zero)return false; try{return SwitchDesktop(h);}finally{CloseDesktop(h);} }
     public static void Click(int x,int y) { SetCursorPos(x,y); mouse_event(2,0,0,0,UIntPtr.Zero); mouse_event(4,0,0,0,UIntPtr.Zero); }
-    [DllImport("user32.dll")] public static extern bool SetWindowPos(IntPtr h, IntPtr after, int x, int y, int cx, int cy, uint flags);
-    public static bool MoveWindow(int handle, int x, int y, int cx, int cy) { return SetWindowPos((IntPtr)handle, IntPtr.Zero, x, y, cx, cy, 0x0001 | 0x0002 | 0x0004 | 0x0040); }
     public static bool ForegroundBelongsToWeChat() {
         var fg = GetForegroundWindow();
         if (fg == IntPtr.Zero) return false;
@@ -44,8 +42,6 @@ public static class WeChatNative {
             return name == "Weixin" || name == "WeChatAppEx" || name == "WeChat";
         } catch { return false; }
     }
-    public static void MouseDown(int x,int y) { SetCursorPos(x,y); mouse_event(2,0,0,0,UIntPtr.Zero); }
-    public static void MouseUp(int x,int y) { SetCursorPos(x,y); mouse_event(4,0,0,0,UIntPtr.Zero); }
     public static void Wheel(int x,int y) { SetCursorPos(x,y); mouse_event(2048,0,0,unchecked((uint)-1200),UIntPtr.Zero); }
     public static long[] BrowserHandles(long main, uint[] pids) {
         var result=new HashSet<long>();

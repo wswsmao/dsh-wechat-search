@@ -193,68 +193,6 @@ function Open-Candidate($Search,$Element,$Candidate,[datetimeoffset]$Reference){
     }
     throw 'ARTICLE_HEADER_UNAVAILABLE'
 }
-function Native-Drag {
-    param([int]$FromX,[int]$FromY,[int]$ToX,[int]$ToY,[int]$Steps=20,[int]$StepMs=30)
-    [WeChatNative]::SetCursorPos($FromX,$FromY);Desktop-Pause 200
-    [WeChatNative]::MouseDown($FromX,$FromY);Desktop-Pause 200
-    for($i=1;$i -le $Steps;$i++){
-        $x=[int]($FromX+($ToX-$FromX)*$i/$Steps);$y=[int]($FromY+($ToY-$FromY)*$i/$Steps)
-        [WeChatNative]::SetCursorPos($x,$y);Desktop-Pause $StepMs
-    }
-    [WeChatNative]::MouseUp($ToX,$ToY);Desktop-Pause 200
-}
-function Window-Rect([long]$Handle){
-    $r=New-Object WeChatNative+Rect;[void][WeChatNative]::GetWindowRect([IntPtr]$Handle,[ref]$r)
-    return @{Left=$r.Left;Top=$r.Top;Right=$r.Right;Bottom=$r.Bottom;Width=$r.Right-$r.Left;Height=$r.Bottom-$r.Top}
-}
-# Tear the active tab out of an article window's tab strip so it becomes an independent window.
-# The tab strip is a native widget and is NOT in the UIA tree; it sits above the document rect.
-# Grab point is derived from the document offset so it adapts to DPI and window width.
-function Tear-Off-Window($Window){
-    if(!$Window){return $false}
-    $handle=$Window.handle
-    try{
-        $rect=Window-Rect $handle
-        $doc=$Window.document.Current.BoundingRectangle
-        if($doc.IsEmpty){return $false}
-        # Tab strip occupies the band between the window top and the document top.
-        $stripHeight=[int]($doc.Y-$rect.Top)
-        if($stripHeight -lt 20){return $false}
-        $grabY=[int]($rect.Top+[Math]::Min(55,$stripHeight*0.55))
-        # Grab inside the tab strip regardless of window size: a detached window can be far smaller,
-        # so a fixed pixel offset from the left edge would land outside and make every drag a no-op.
-        $grabX=[int]($rect.Left+$rect.Width*0.35)
-        if($grabX -gt $rect.Right-40){$grabX=[int]($rect.Left+$rect.Width*0.5)}
-        if($grabX -lt $rect.Left+20){$grabX=[int]($rect.Left+20)}
-        $before=@(Browser-Windows|ForEach-Object{$_.handle})
-        Activate-Window $handle
-        # Windows drift after each detach: MoveWindow/SetWindowPos report success but do not actually
-        # reposition these windows, so a fixed coordinate stops matching. Re-measure on every attempt.
-        # The drag distance is escalated because the required tear-off threshold varies with window size.
-        $distances=@(760,1100,1500)
-        for($attempt=0;$attempt -lt $distances.Count;$attempt++){
-            if($attempt -gt 0){
-                Desktop-Pause 400
-                $again=Window-Rect $handle
-                $doc2=$Window.document.Current.BoundingRectangle
-                if($doc2.IsEmpty){break}
-                $h2=[int]($doc2.Y-$again.Top)
-                if($h2 -lt 20){break}
-                $grabY=[int]($again.Top+[Math]::Min(55,$h2*0.55))
-                $grabX=[int]($again.Left+$again.Width*0.35)
-                if($grabX -gt $again.Right-40){$grabX=[int]($again.Left+$again.Width*0.5)}
-                if($grabX -lt $again.Left+20){$grabX=[int]($again.Left+20)}
-                Activate-Window $handle
-            }
-            $d=$distances[$attempt]
-            Native-Drag -FromX $grabX -FromY $grabY -ToX ($grabX+[int]($d*0.4)) -ToY ($grabY+$d) -Steps 24 -StepMs 28
-            $after=@(Browser-Windows|ForEach-Object{$_.handle})
-            $detached=$after|Where-Object{$_ -notin $before}|Select-Object -First 1
-            if($detached){$script:OwnedWindows[$detached]=$true;return $true}
-        }
-        return $false
-    }catch{return $false}
-}
 function Close-OwnedArticle($Window){
     # Close only tabs/windows created by this worker, never a pre-existing user's browser.
     if(!$Window -or !$script:OwnedWindows.ContainsKey($Window.handle)){return}

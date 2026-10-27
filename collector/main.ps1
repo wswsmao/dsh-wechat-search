@@ -134,13 +134,10 @@ try {
     $cached=@{};foreach($record in $script:Records){$key=(Normalize-Text $record.title)+'|'+(Normalize-Text $record.account);$cached[$key]=$record}
     $keyCounts=@{};foreach($c in $script:Candidates){$k=(Normalize-Text $c.title)+'|'+(Normalize-Text $c.account);if(!$keyCounts.ContainsKey($k)){$keyCounts[$k]=0};$keyCounts[$k]++}
     $lastExact=$null
-    $parallelWindowLimit=6
-    if($request.parallel_windows){$parallelWindowLimit=[int]$request.parallel_windows}
-    $parallelWindowLimit=[math]::Max(1,[math]::Min(64,$parallelWindowLimit))
-    $script:ParallelStats=@{opened=0;teared=0;batches=0;max_windows=0}
-    # ---- Pipeline stage 1: open candidates and tear each off so windows accumulate ----
-    # Opening stays serial (WeChat reuses the active article window), but it no longer waits for body reading.
-    $opened=New-Object System.Collections.ArrayList
+    # Articles are opened and read one at a time. A window-pool/tear-off mode was implemented but
+    # removed: WeChat keeps navigating a detached window to other articles, which silently attached the
+    # wrong body to records (~50% loss). Pre-screening already cuts how many articles get opened, so the
+    # pool bought nothing and risked correctness.
     # List-only mode: emit every candidate from the result list without opening a single article. The
     # caller pre-screens on title/account/snippet first, so we only pay to open what survives.
     if($listOnly){
@@ -175,26 +172,11 @@ try {
                 $record=$article.record;$record.url=Read-PublicUrl $article.window;$record.identity=Get-ArticleIdentity $record.url;$record.captured_at=[datetimeoffset]::Now.ToString('o');$record.source='logged-in WeChat desktop';$record.query=$request.keyword
                 if($record.published_at_iso){$dt=[datetimeoffset]::Parse($record.published_at_iso);if($lastExact -and $dt -gt $lastExact){$script:OrderingIssues+=@{type='exact_date_inversion';index=$candidate.index}};$lastExact=$dt}
                 $membership=Get-WindowMembership $record $cutoff $reference
-                $script:ParallelStats.opened++
-                $detached=$false
-                # Detaching is only useful when a pool is actually used. With parallel_windows<=1 the
-                # article is read right away, so tearing adds window churn with no benefit and risks
-                # leaving a pooled window navigated to a different article.
-                if($includeBody -and $membership -eq $true -and $parallelWindowLimit -gt 1){
-                    $detached=Tear-Off-Window $article.window
-                    if($detached){$script:ParallelStats.teared++}
-                }
-                if($detached){
-                    # Stage 1 keeps detached windows open so several articles can be read together.
-                    [void]$opened.Add(@{window=$article.window;record=$record;candidate=$candidate;key=$key;membership=$membership})
-                }else{
-                    # Tear-off failed: this window is still the active one and the next click would
-                    # navigate it to another article. Read and close it now so the body cannot be
-                    # swapped underneath the record.
-                    $single=New-Object System.Collections.ArrayList
-                    [void]$single.Add(@{window=$article.window;record=$record;candidate=$candidate;key=$key;membership=$membership})
-                    Read-Opened-Batch $single $cutoff $reference $includeBody $runtimeRoot ([ref]$cached)
-                }
+                # The window is still the active one: the next click would navigate it elsewhere, so read
+                # and close it now and the body cannot be swapped underneath the record.
+                $single=New-Object System.Collections.ArrayList
+                [void]$single.Add(@{window=$article.window;record=$record;candidate=$candidate;key=$key;membership=$membership})
+                Read-Opened-Batch $single $cutoff $reference $includeBody $runtimeRoot ([ref]$cached)
                 $success=$true
                 break
             }catch{
@@ -204,11 +186,8 @@ try {
             }
         }
         if(!$success){$script:Errors+=@{title=$candidate.title;account=$candidate.account;index=$candidate.index;reason=$failure}}
-        # Drain the window pool when it reaches the configured size, so windows never pile up without limit.
-        if($opened.Count -ge $parallelWindowLimit){Read-Opened-Batch $opened $cutoff $reference $includeBody $runtimeRoot ([ref]$cached);$opened.Clear();$script:ParallelStats.batches++}
         Publish-State;Desktop-Pause $delayMs
     }
-    if($opened.Count){Read-Opened-Batch $opened $cutoff $reference $includeBody $runtimeRoot ([ref]$cached);$opened.Clear();$script:ParallelStats.batches++}
     $uncertainDates=@($script:Records|Where-Object{$null -eq (Get-WindowMembership $_ $cutoff $reference)})
     $bodyIncompleteFinal=@($script:Records|Where-Object{$includeBody -and (Get-WindowMembership $_ $cutoff $reference) -eq $true -and !$_.body_complete})
     if($script:Errors.Count -or $script:OrderingIssues.Count -or $uncertainDates.Count -or $bodyIncompleteFinal.Count){$script:Status='partial';$script:StopReason=if($script:Errors.Count){'ARTICLE_EXTRACTION_ERRORS'}elseif($script:OrderingIssues.Count){'RESULT_ORDERING_UNCERTAINTY'}elseif($uncertainDates.Count){'PUBLICATION_DATE_PRECISION_UNCERTAIN'}else{'ARTICLE_BODY_INCOMPLETE'}}else{$script:Status='complete';$script:StopReason=if($script:Boundary){'TIME_WINDOW_BOUNDARY_REACHED'}else{'SEARCH_EXHAUSTED'}}
