@@ -13,6 +13,8 @@ $reference=([datetimeoffset]::Parse($request.reference_time)).ToOffset([timespan
 if($reference -gt [datetimeoffset]::Now){throw 'Future reference_time is not allowed'}
 if($null -ne $request.include_body -and $request.include_body -isnot [bool]){throw 'include_body must be boolean'}
 $includeBody=($request.include_body -eq $true)
+$listOnly=($request.list_only -eq $true)
+function Get-StableKey([string]$Title,[string]$Account){return (Normalize-Text $Title)+'|'+(Normalize-Text $Account)}
 $timeoutMinutes=30;$delayMs=250;$maxRetries=1
 if($request.settings){if($request.settings.timeout_minutes){$timeoutMinutes=[int]$request.settings.timeout_minutes};if($null -ne $request.settings.delay_ms){$delayMs=[int]$request.settings.delay_ms};if($null -ne $request.settings.max_retries){$maxRetries=[int]$request.settings.max_retries}}
 $timeoutMinutes=[math]::Max(1,[math]::Min(120,$timeoutMinutes));$delayMs=[math]::Max(120,[math]::Min(10000,$delayMs));$maxRetries=[math]::Max(0,[math]::Min(3,$maxRetries))
@@ -139,8 +141,25 @@ try {
     # ---- Pipeline stage 1: open candidates and tear each off so windows accumulate ----
     # Opening stays serial (WeChat reuses the active article window), but it no longer waits for body reading.
     $opened=New-Object System.Collections.ArrayList
+    # List-only mode: emit every candidate from the result list without opening a single article. The
+    # caller pre-screens on title/account/snippet first, so we only pay to open what survives.
+    if($listOnly){
+        $listOut=@()
+        foreach($candidate in $script:Candidates){
+            $script:Processed++
+            $m=Get-WindowMembership $candidate $cutoff $reference
+            if($m -eq $false){continue}
+            $listOut+=@{title=$candidate.title;account=$candidate.account;relative_date=$candidate.relative_date;age_seconds=$candidate.age_seconds;index=$candidate.index;snippet=$candidate.snippet;query=$request.keyword;identity='list:'+(Get-StableKey $candidate.title $candidate.account);within_window=$m;list_only=$true}
+        }
+        $script:Records=$listOut
+        return
+    }
+    # When the caller already pre-screened the list, only the surviving keys are opened.
+    $openKeys=$null
+    if($request.open_keys){$openKeys=@{};foreach($k in @($request.open_keys)){$openKeys[[string]$k]=$true}}
     foreach($candidate in $script:Candidates){
         Check-Stop;$script:Processed++;$key=(Normalize-Text $candidate.title)+'|'+(Normalize-Text $candidate.account)
+        if($openKeys -and !$openKeys.ContainsKey($key)){continue}
         if($candidate.index -lt 0 -and $cached.ContainsKey($key) -and $keyCounts[$key] -eq 1 -and (!$includeBody -or $cached[$key].body_complete)){continue}
         # Current candidates are opened even on resume: title/account alone cannot prove article identity.
         $success=$false;$failure='';$article=$null

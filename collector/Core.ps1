@@ -32,7 +32,14 @@ function ConvertFrom-SearchText([string]$Text,[string[]]$Titles,[datetimeoffset]
         $end=if($i+1 -lt $positions.Count){$positions[$i+1]}else{$lines.Count};$label='';$account=''
         for($j=$positions[$i]+1;$j -lt $end;$j++){ $line=$lines[$j].Trim();if($line -match '^(刚刚|\d+(分钟|小时|天|周|个月|年)前|\d{4}[-/]\d{1,2}[-/]\d{1,2})$'){$label=$line;$account=$lines[$j-1].Trim();break} }
         if(!$label -or !$account){throw 'SEARCH_TEXT_DATE_MISSING'}
-        $items+=@{title=$Titles[$i];account=$account;relative_date=$label;age_seconds=(Get-DateLabelAge $label $At);age_reference=$At.ToString('o');index=$i}
+        # Keep the preview snippet the result list shows. It sits between the title and the account line
+        # and lets the caller pre-screen candidates before paying to open every article.
+        $snippetEnd=$positions[$i]+1
+        for($j=$positions[$i]+1;$j -lt $end;$j++){ if((Normalize-Text $lines[$j].Trim()) -eq (Normalize-Text $account)){$snippetEnd=$j;break} }
+        $snippet=''
+        if($snippetEnd -gt $positions[$i]+1){$snippet=(($lines[($positions[$i]+1)..($snippetEnd-1)] | ForEach-Object {$_.Trim()}) -join ' ').Trim()}
+        if($snippet.Length -gt 400){$snippet=$snippet.Substring(0,400)}
+        $items+=@{title=$Titles[$i];account=$account;relative_date=$label;age_seconds=(Get-DateLabelAge $label $At);age_reference=$At.ToString('o');index=$i;snippet=$snippet}
     }
     return ,$items
 }
