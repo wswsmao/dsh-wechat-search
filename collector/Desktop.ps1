@@ -28,8 +28,6 @@ function Click-Element($Element,[long]$Handle){
 function Browser-Windows {
     $ids=[uint32[]]@((Get-Process Weixin,WeChatAppEx -ErrorAction SilentlyContinue).Id)
     foreach($h in [WeChatNative]::BrowserHandles($script:MainHandle,$ids)){
-        # Skip windows this worker already identified as non-article (mini-program etc.) and hid.
-        if($script:IgnoredWindows -and $script:IgnoredWindows.ContainsKey([long]$h)){continue}
         try{$root=[System.Windows.Automation.AutomationElement]::FromHandle([IntPtr]$h);$doc=Element-Document $root;if($doc){@{handle=$h;root=$root;document=$doc}}}catch{}
     }
 }
@@ -211,14 +209,11 @@ function Open-Candidate($Search,$Element,$Candidate,[datetimeoffset]$Reference){
         Desktop-Pause 200
         foreach($w in Browser-Windows){if($w.handle -eq $Search.handle){continue};if($w.handle -notin $before){$script:OwnedWindows[$w.handle]=$true};$changed=$false;try{$changed=$beforeUrls[$w.handle] -cne $w.document.GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value}catch{};if($w.handle -in $before -and !$changed){continue}
             Check-PageChallenge $w
-            # A surface without article markers is not an article (mini-program, app page). Hide it and
-            # stop immediately: never click inside it, and never retry this row.
-            if(!(Test-ArticleWindow $w)){
-                if(!$script:IgnoredWindows){$script:IgnoredWindows=@{}}
-                $script:IgnoredWindows[[long]$w.handle]=$true
-                try{[void][WeChatNative]::ShowWindow([IntPtr]$w.handle,0)}catch{}
-                throw 'NON_ARTICLE_SURFACE'
-            }
+            # WeChat often reuses one window for the next article. A surface without article markers
+            # is usually still loading, NOT a different app: hiding it would break every later open,
+            # because that reused window stays hidden. Only skip this iteration and keep waiting;
+            # genuine mini-program rows are already blocked before the click by their account label.
+            if(!(Test-ArticleWindow $w)){continue}
             $header=Read-ArticleHeader $w $Candidate $Reference;if($header){return @{window=$w;record=$header}}}
     }
     throw 'ARTICLE_HEADER_UNAVAILABLE'
