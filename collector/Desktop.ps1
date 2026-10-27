@@ -94,13 +94,42 @@ function Search-Items($Search){
     foreach($e in $all){if($e.Current.ClassName -like '*search_list_item*'){$items+=$e}}
     return ,$items
 }
+# The clipboard is a single global resource: another process (including a concurrent collector) can hold
+# it, and OpenClipboard then fails instead of queueing. Retry with a short backoff rather than failing
+# the whole run, and never leave the clipboard cleared if a step fails.
+function Clipboard-Clear-Retry([int]$Attempts=15,[int]$DelayMs=400){
+    for($i=0;$i -lt $Attempts;$i++){
+        try{[Windows.Forms.Clipboard]::Clear();return}
+        catch{if($i -eq $Attempts-1){throw};Desktop-Pause ($DelayMs + (Get-Random -Maximum 250))}
+    }
+}
+function Clipboard-SetText-Retry([string]$Text,[int]$Attempts=15,[int]$DelayMs=400){
+    for($i=0;$i -lt $Attempts;$i++){
+        try{[Windows.Forms.Clipboard]::SetText($Text);return}
+        catch{if($i -eq $Attempts-1){throw};Desktop-Pause ($DelayMs + (Get-Random -Maximum 250))}
+    }
+}
+function Clipboard-GetText-Retry([int]$Attempts=8,[int]$DelayMs=250){
+    for($i=0;$i -lt $Attempts;$i++){
+        try{
+            $t=[Windows.Forms.Clipboard]::GetText()
+            if($t -and $t.Trim()){return $t}
+        }catch{}
+        Desktop-Pause $DelayMs
+    }
+    return ''
+}
 function Search-CopyText($Search){
     Activate-Window $Search.handle;$r=$Search.document.Current.BoundingRectangle
     [WeChatNative]::Click([int]($r.X+50),[int]($r.Y+[math]::Min(600,$r.Height-200)))
     if(![WeChatNative]::IsForeground($Search.handle)){throw 'FOCUS_UNAVAILABLE'}
-    [Windows.Forms.Clipboard]::Clear();[Windows.Forms.SendKeys]::SendWait('^a^c');Desktop-Pause 200
-    if(![WeChatNative]::IsForeground($Search.handle)){throw 'FOCUS_CHANGED'}
-    $text=[Windows.Forms.Clipboard]::GetText();[Windows.Forms.SendKeys]::SendWait('{ESC}')
+    $saved=$null;try{$saved=[Windows.Forms.Clipboard]::GetDataObject()}catch{$saved=$null}
+    Clipboard-Clear-Retry
+    [Windows.Forms.SendKeys]::SendWait('^a^c')
+    # The copy is delivered asynchronously to the target window, so wait for real content, not a fixed delay.
+    $text=Clipboard-GetText-Retry
+    [Windows.Forms.SendKeys]::SendWait('{ESC}')
+    if(!$text -and $saved){try{[Windows.Forms.Clipboard]::SetDataObject($saved,$true)}catch{}}
     return $text
 }
 function Scroll-SearchEnd($Search,$Items){

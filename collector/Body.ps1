@@ -47,14 +47,18 @@ function Body-SelectionFallback($Window,$Element) {
     if(!$children.Count){return $null}
     $first=$children[0].Current.Name.Trim();$last=$children[-1].Current.Name.Trim()
     if(!$first -or !$last){return $null}
-    $saved=[Windows.Forms.Clipboard]::GetDataObject()
+    # Reading the clipboard can itself fail when another process holds it, so guard even the save step.
+    $saved=$null;try{$saved=[Windows.Forms.Clipboard]::GetDataObject()}catch{$saved=$null}
     try {
         Activate-Window $Window.handle;$r=$Window.document.Current.BoundingRectangle
         [WeChatNative]::Click([int]($r.X+20),[int]($r.Y+[math]::Min(160,$r.Height-40)))
         if(![WeChatNative]::IsForeground($Window.handle)){throw 'FOCUS_UNAVAILABLE'}
-        [Windows.Forms.Clipboard]::Clear();[Windows.Forms.SendKeys]::SendWait('^a^c');Desktop-Pause 200
-        if(![WeChatNative]::IsForeground($Window.handle)){throw 'FOCUS_CHANGED'}
-        $page=[Windows.Forms.Clipboard]::GetText();[Windows.Forms.SendKeys]::SendWait('{ESC}')
+        Clipboard-Clear-Retry
+        [Windows.Forms.SendKeys]::SendWait('^a^c')
+        # Wait for the asynchronous copy to land instead of assuming a fixed delay is enough.
+        $page=Clipboard-GetText-Retry
+        [Windows.Forms.SendKeys]::SendWait('{ESC}')
+        if(!$page){return $null}
         $start=$page.IndexOf($first,[StringComparison]::Ordinal)
         if($start -lt 0){return $null}
         $end=$page.IndexOf($last,$start,[StringComparison]::Ordinal)
