@@ -68,7 +68,13 @@ function Open-Search {
     # Qt main UI has no accessible controls. Use DPI-scaled relative anchors on the verified 4.x layout only.
     $r=New-Object WeChatNative+Rect;[void][WeChatNative]::GetWindowRect([IntPtr]$script:MainHandle,[ref]$r)
     $scale=[WeChatNative]::GetDpiForWindow([IntPtr]$script:MainHandle)/96.0
-    if(($r.Right-$r.Left)/$scale -lt 700 -or ($r.Bottom-$r.Top)/$scale -lt 500){throw 'WECHAT_LAYOUT_UNSUPPORTED'}
+    if(($r.Right-$r.Left)/$scale -lt 700 -or ($r.Bottom-$r.Top)/$scale -lt 500){
+        # Carry the measured geometry into the error: a bare code cannot be diagnosed after the fact,
+        # and guessing at the cause previously cost a whole debugging round.
+        $rawW=$r.Right-$r.Left;$rawH=$r.Bottom-$r.Top
+        throw ("WECHAT_LAYOUT_UNSUPPORTED hwnd={0} raw={1}x{2} scale={3} logical={4}x{5} rect=({6},{7})-({8},{9}) windows={10}" -f `
+            $script:MainHandle,$rawW,$rawH,$scale,[int]($rawW/$scale),[int]($rawH/$scale),$r.Left,$r.Top,$r.Right,$r.Bottom,@(Browser-Windows).Count)
+    }
     [WeChatNative]::Click([int]($r.Left+36*$scale),[int]($r.Top+256*$scale));Desktop-Pause 500
     [WeChatNative]::Click([int]($r.Left+140*$scale),[int]($r.Top+200*$scale))
     for($i=0;$i -lt 50;$i++){Desktop-Pause 200;$w=Find-Search;if($w){return $w}}
@@ -80,7 +86,18 @@ function Search-Query($Search,[string]$Keyword){
     Click-Element (Element-Name $Search.root '搜索') $Search.handle
     Desktop-Pause 1000
     # Search entry may be 'all' or home; results have anonymous article tabs at document-relative anchor.
-    $w=Find-Search;if(!$w){throw 'SEARCH_WINDOW_LOST'}
+    $w=Find-Search
+    if(!$w){
+        # Diagnose the miss: how many browser windows exist, their visibility and size.
+        $ids=[uint32[]]@((Get-Process Weixin,WeChatAppEx -ErrorAction SilentlyContinue).Id)
+        $detail=@()
+        foreach($h in [WeChatNative]::BrowserHandles($script:MainHandle,$ids)){
+            $rr=New-Object WeChatNative+Rect;[void][WeChatNative]::GetWindowRect([IntPtr]$h,[ref]$rr)
+            $sc=[WeChatNative]::GetDpiForWindow([IntPtr]$h)/96.0
+            $detail+=("h={0} vis={1} {2}x{3} scale={4}" -f $h,[WeChatNative]::IsWindowVisible([IntPtr]$h),($rr.Right-$rr.Left),($rr.Bottom-$rr.Top),$sc)
+        }
+        throw ("SEARCH_WINDOW_LOST main={0} browserWindows={1} [{2}]" -f $script:MainHandle,$detail.Count,($detail -join ' ; '))
+    }
     # Tab labels are not exposed via UIA names; probe each tab and verify via the document title.
     if($w.document.Current.Name -notmatch '文章'){
         Activate-Window $w.handle;$r=$w.document.Current.BoundingRectangle;$dpi=[WeChatNative]::GetDpiForWindow([IntPtr]$w.handle)/96.0
@@ -224,7 +241,18 @@ function Open-Candidate($Search,$Element,$Candidate,[datetimeoffset]$Reference){
             if(!(Test-ArticleWindow $w)){continue}
             $header=Read-ArticleHeader $w $Candidate $Reference;if($header){return @{window=$w;record=$header}}}
     }
-    throw 'ARTICLE_HEADER_UNAVAILABLE'
+    # Report what was actually on screen so the next failure is diagnosable without guessing.
+    $seen=@()
+    foreach($w in Browser-Windows){
+        if($w.handle -eq $Search.handle){continue}
+        $hasName=[bool](Element-Id $w.root 'activity-name')
+        $hasDesc=[bool](Element-Id $w.root 'js_text_desc')
+        $hasVideo=[bool](Element-Id $w.root 'js_video_page_title')
+        $docName=''
+        try{$docName=$w.document.Current.Name}catch{}
+        $seen+=("h={0} name={1} desc={2} video={3} doc='{4}'" -f $w.handle,$hasName,$hasDesc,$hasVideo,($docName -replace "`n",' ').Substring(0,[Math]::Min(30,($docName -replace "`n",' ').Length)))
+    }
+    throw ("ARTICLE_HEADER_UNAVAILABLE title='{0}' account='{1}' windows={2} [{3}]" -f $Candidate.title,$Candidate.account,$seen.Count,($seen -join ' ; '))
 }
 function Close-OwnedArticle($Window){
     # Close only tabs/windows created by this worker, never a pre-existing user's browser.
