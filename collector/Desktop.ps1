@@ -175,14 +175,22 @@ function Read-ArticleHeader($Window,$Candidate,[datetimeoffset]$Reference){
         if((Normalize-Text $at.Current.Name) -cne (Normalize-Text $Candidate.title) -or (Normalize-Text $acct.Current.Name) -cne (Normalize-Text $Candidate.account)){return $null}
         $all=$Window.document.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);$past=$false;$date='';$author=''
         foreach($e in $all){$c=$e.Current;if($c.AutomationId -eq 'activity-name'){$past=$true;continue};if(!$past){continue};if($c.AutomationId -eq 'js_content' -or $c.ClassName -match 'rich_media_content'){break};if($c.ControlType -eq [System.Windows.Automation.ControlType]::Text){if($c.Name -match '^\d{4}年\d{1,2}月\d{1,2}日\s+\d{1,2}:\d{2}$'){$date=$c.Name;break};if($c.Name -and $c.Name -ne '原创'){$author=$c.Name}}}
-        if(!$date){return $null};$dt=[datetime]::ParseExact($date,'yyyy年M月d日 HH:mm',[Globalization.CultureInfo]::InvariantCulture)
+        if(!$date){return $null}
+        # A date string that does not match the expected layout must skip this article, never crash
+        # the whole job: one unparsable header previously failed the entire collection run.
+        try{$dt=[datetime]::ParseExact($date,'yyyy年M月d日 HH:mm',[Globalization.CultureInfo]::InvariantCulture)}catch{return $null}
         return @{title=$at.Current.Name;author=$author;account=$acct.Current.Name;date=$dt.ToString('yyyy-MM-dd');published_at_iso=([datetimeoffset]::new($dt,[timespan]::FromHours(8))).ToString('o');publication_precision='minute';content_type='article'}
     }
     $share=Element-Id $Window.root 'js_text_desc';if(!$share){$share=Element-Id $Window.root 'js_video_page_title'};if(!$share -or (Normalize-Text $Window.document.Current.Name) -cne (Normalize-Text $Candidate.title)){return $null}
     $all=$Window.document.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition);$label='';$account=''
     foreach($e in $all){if($e.Current.ClassName -match 'rich_media_meta_list_combine'){$label=$e.Current.Name};if($e.Current.AutomationId -eq 'js_wx_follow_nickname'){$account=$e.Current.Name}}
     $relativeStamp=$null
-    if($label -match '(今天|昨天|前天)\s*(\d{1,2}:\d{2})'){$days=@{'今天'=0;'昨天'=1;'前天'=2}[$Matches[1]];$clock=$Matches[2];$dt=([datetimeoffset]::Now.ToOffset([timespan]::FromHours(8))).Date.AddDays(-$days);$time=[datetime]::ParseExact($clock,'H:mm',[Globalization.CultureInfo]::InvariantCulture);$dt=$dt.AddHours($time.Hour).AddMinutes($time.Minute);$relativeStamp=[datetimeoffset]::new($dt,[timespan]::FromHours(8))}
+    # Same guard here: an unexpected clock layout skips this article instead of failing the run.
+    if($label -match '(今天|昨天|前天)\s*(\d{1,2}:\d{2})'){
+        try{
+            $days=@{'今天'=0;'昨天'=1;'前天'=2}[$Matches[1]];$clock=$Matches[2];$dt=([datetimeoffset]::Now.ToOffset([timespan]::FromHours(8))).Date.AddDays(-$days);$time=[datetime]::ParseExact($clock,'H:mm',[Globalization.CultureInfo]::InvariantCulture);$dt=$dt.AddHours($time.Hour).AddMinutes($time.Minute);$relativeStamp=[datetimeoffset]::new($dt,[timespan]::FromHours(8))
+        }catch{$relativeStamp=$null}
+    }
     if($relativeStamp){if(!$account){$account=$Candidate.account};if((Normalize-Text $account) -cne (Normalize-Text $Candidate.account)){return $null};return @{title=$Window.document.Current.Name;author='';account=$account;date=$relativeStamp.ToString('yyyy-MM-dd');published_at_iso=$relativeStamp.ToString('o');publication_precision='minute';content_type=$(if(Element-Id $Window.root 'js_video_page_title'){'video_share'}else{'text_share'});date_year_basis='visible relative publication date'}}
     if(!$label -or $label -notmatch '(\d{1,2})月(\d{1,2})日'){return $null};$month=[int]$Matches[1];$day=[int]$Matches[2]
     $ageReference=if($Candidate.age_reference){[datetimeoffset]::Parse($Candidate.age_reference)}else{$Reference};$estimated=$ageReference.AddSeconds(-[double]$Candidate.age_seconds);$possible=@();foreach($year in @(($Reference.Year-1),$Reference.Year,($Reference.Year+1))){try{$d=[datetime]::new($year,$month,$day);$possible+=@{date=$d;distance=[math]::Abs(($d-$estimated.DateTime).TotalDays)}}catch{}}

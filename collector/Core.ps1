@@ -44,8 +44,9 @@ function ConvertFrom-SearchText([string]$Text,[string[]]$Titles,[datetimeoffset]
     return ,$items
 }
 function Get-WindowMembership($Record,[datetimeoffset]$Cutoff,[datetimeoffset]$Reference) {
-    if($Record.published_at_iso){$d=[datetimeoffset]::Parse($Record.published_at_iso);return ($d -ge $Cutoff -and $d -le $Reference)}
-    $d=[datetimeoffset]::new([datetime]::ParseExact($Record.date,'yyyy-MM-dd',[Globalization.CultureInfo]::InvariantCulture),[timespan]::FromHours(8));$end=$d.AddDays(1)
+    if($Record.published_at_iso){try{$d=[datetimeoffset]::Parse($Record.published_at_iso)}catch{return $null};return ($d -ge $Cutoff -and $d -le $Reference)}
+    # An unparsable date marks the record uncertain; it must never fail the whole collection run.
+    try{$d=[datetimeoffset]::new([datetime]::ParseExact($Record.date,'yyyy-MM-dd',[Globalization.CultureInfo]::InvariantCulture),[timespan]::FromHours(8))}catch{return $null};$end=$d.AddDays(1)
     if($d -ge $Cutoff -and $end -le $Reference){return $true}
     if($end -le $Cutoff -or $d -gt $Reference){return $false}
     return $null
