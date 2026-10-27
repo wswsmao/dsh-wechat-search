@@ -77,6 +77,23 @@ function Search-Query($Search,[string]$Keyword){
             $w=Find-Search;if(!$w){break}
             if($w.document.Current.Name -match '文章'){break}
         }
+        # The tab strip is a native widget and may not be in the document subtree on the landing page.
+        # Retry a second pass after the list settles instead of giving up on the first attempt.
+        if(!$w -or $w.document.Current.Name -notmatch '文章'){
+            Desktop-Pause 1200
+            $w=Find-Search
+            if($w -and $w.document.Current.Name -notmatch '文章'){
+                $all2=$w.document.FindAll([System.Windows.Automation.TreeScope]::Descendants,[System.Windows.Automation.Condition]::TrueCondition)
+                $tabs2=@();foreach($e in $all2){if($e.Current.ClassName -like '*unit__item*' -and !$e.Current.BoundingRectangle.IsEmpty){$tabs2+=$e}}
+                $tabs2=@($tabs2|Sort-Object {$_.Current.BoundingRectangle.X})
+                foreach($t in $tabs2){
+                    $c=$t.Current.BoundingRectangle
+                    [WeChatNative]::Click([int]($c.X+$c.Width/2),[int]($c.Y+$c.Height/2));Desktop-Pause 900
+                    $w=Find-Search;if(!$w){break}
+                    if($w.document.Current.Name -match '文章'){break}
+                }
+            }
+        }
         if(!$w -or $w.document.Current.Name -notmatch '文章'){throw 'ARTICLE_TAB_UNAVAILABLE'}
     }
     for($i=0;$i -lt 50;$i++){Desktop-Pause 200;$w=Find-Search;if($w -and (Element-Name $w.root '最新')){break}}
