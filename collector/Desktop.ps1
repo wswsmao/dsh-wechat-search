@@ -17,7 +17,11 @@ function Activate-Window([long]$Handle){
     # WeChat renders articles in child renderer windows, so the foreground window is often a sibling
     # (WeChatAppEx) rather than the handle we activated. Accept focus when WeChat owns the foreground.
     if([WeChatNative]::ForegroundBelongsToWeChat()){Desktop-Pause 150;return}
-    throw 'FOCUS_UNAVAILABLE'
+    # Report who actually holds focus: retrying blind on this error wasted whole runs before.
+    $fg=[WeChatNative]::ForegroundDescription()
+    $vis=[WeChatNative]::IsWindowVisible([IntPtr]$Handle)
+    $ico=[WeChatNative]::IsIconic([IntPtr]$Handle)
+    throw ("FOCUS_UNAVAILABLE target={0} visible={1} iconic={2} foreground={3}" -f $Handle,$vis,$ico,$fg)
 }
 function Click-Element($Element,[long]$Handle){
     if(!$Element){throw 'UI_ELEMENT_MISSING'};Check-Stop

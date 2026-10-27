@@ -151,6 +151,13 @@ try {
             $listOut+=@{title=$candidate.title;account=$candidate.account;relative_date=$candidate.relative_date;age_seconds=$candidate.age_seconds;index=$candidate.index;snippet=$candidate.snippet;query=$request.keyword;identity='list:'+(Get-StableKey $candidate.title $candidate.account);within_window=$m;list_only=$true}
         }
         $script:Records=$listOut
+        # A bare `return` here left the job stuck in `running`: the manager then saw a worker that
+        # exited without a terminal status, and pass 2 never got a list. Persist the terminal state
+        # before leaving, exactly like the full-collection path does.
+        $script:Status=if($script:Boundary -or $script:Exhausted){'complete'}else{'partial'}
+        $script:StopReason=if($script:Boundary){'TIME_WINDOW_BOUNDARY_REACHED'}elseif($script:Exhausted){'SEARCH_EXHAUSTED'}else{'SEARCH_INCOMPLETE'}
+        $script:Phase='finished'
+        Publish-State
         return
     }
     # When the caller already pre-screened the list, only the surviving keys are opened.

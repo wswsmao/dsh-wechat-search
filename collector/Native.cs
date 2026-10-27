@@ -43,6 +43,17 @@ public static class WeChatNative {
         } catch { return false; }
     }
     public static void Wheel(int x,int y) { SetCursorPos(x,y); mouse_event(2048,0,0,unchecked((uint)-1200),UIntPtr.Zero); }
+    /// <summary>Describe the foreground window for diagnostics: handle, pid and process name.
+    /// Returns "none" when nothing is foreground, so a failure message always says what held focus.</summary>
+    public static string ForegroundDescription() {
+        var fg = GetForegroundWindow();
+        if (fg == IntPtr.Zero) return "none";
+        uint pid = 0;
+        GetWindowThreadProcessId(fg, out pid);
+        string name = "?";
+        try { if (pid != 0) name = System.Diagnostics.Process.GetProcessById((int)pid).ProcessName; } catch { name = "gone"; }
+        return "hwnd=" + fg.ToInt64() + " pid=" + pid + " proc=" + name;
+    }
     public static long[] BrowserHandles(long main, uint[] pids) {
         var result=new HashSet<long>();
         EnumProc cb=(h,p)=>{uint id;GetWindowThreadProcessId(h,out id);var c=new StringBuilder(128);GetClassName(h,c,128); if(Array.IndexOf(pids,id)>=0&&c.ToString()=="Chrome_WidgetWin_0"&&IsWindowVisible(h))result.Add(h.ToInt64()); return true;};
