@@ -76,7 +76,16 @@ function Check-Stop {
 }
 function Publish-State {
     $seen=@{};$matches=@();$outside=@();$uncertain=@()
-    foreach($record in $script:Records){if(!$record.identity){$record.identity=Get-ArticleIdentity $record.url};if($seen.ContainsKey($record.identity)){continue};$seen[$record.identity]=$true;$inside=Get-WindowMembership $record $cutoff $reference;$record.within_window=$inside;if($inside -eq $true){$matches+=$record}elseif($inside -eq $false){$outside+=$record}else{$uncertain+=$record}}
+    foreach($record in $script:Records){
+        if(!$record.identity){$record.identity=Get-ArticleIdentity $record.url}
+        if($seen.ContainsKey($record.identity)){continue}
+        $seen[$record.identity]=$true
+        # List-only rows carry no precise date yet (the list shows "2天前" style labels), so a window
+        # test would classify every one of them as uncertain and return an empty list. They are the
+        # pre-screen input, not final results: hand them all to the caller.
+        if($record.list_only){$record.within_window=$null;$matches+=$record;continue}
+        $inside=Get-WindowMembership $record $cutoff $reference;$record.within_window=$inside;if($inside -eq $true){$matches+=$record}elseif($inside -eq $false){$outside+=$record}else{$uncertain+=$record}
+    }
     $matches=@($matches|Sort-Object @{Expression={if($_.published_at_iso){$_.published_at_iso}else{$_.date}};Descending=$true})
     $bodyIncomplete=@($matches|Where-Object{$includeBody -and !$_.body_complete})
     $bodyRead=@($matches|Where-Object{$_.body_text})
