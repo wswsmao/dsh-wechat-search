@@ -25,8 +25,6 @@ $files=@{json=Join-Path $resultsDir 'result.json';csv=Join-Path $resultsDir 'res
 # Stage 2: read bodies for a batch of already-open, detached windows, then close them.
 # Bodies are read through UIA only (no clipboard), so concurrent windows cannot corrupt each other.
 function Read-Opened-Batch($Batch,$Cutoff,$Reference,[bool]$IncludeBody,$RuntimeRoot,[ref]$Cached){
-    $wins=@($Batch|Where-Object{$_.window})
-    if($wins.Count -gt $script:ParallelStats.max_windows){$script:ParallelStats.max_windows=$wins.Count}
     foreach($entry in $Batch){
         Check-Stop
         $record=$entry.record;$window=$entry.window
