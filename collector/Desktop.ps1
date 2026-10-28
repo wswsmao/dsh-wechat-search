@@ -72,7 +72,10 @@ function Open-Search {
     # Qt main UI has no accessible controls. Use DPI-scaled relative anchors on the verified 4.x layout only.
     $r=New-Object WeChatNative+Rect;[void][WeChatNative]::GetWindowRect([IntPtr]$script:MainHandle,[ref]$r)
     $scale=[WeChatNative]::GetDpiForWindow([IntPtr]$script:MainHandle)/96.0
-    if(($r.Right-$r.Left)/$scale -lt 700 -or ($r.Bottom-$r.Top)/$scale -lt 500){
+    # The click anchors need a window wide enough for the search box; 660 is the measured floor for
+    # the 4.x layout. 700 rejected a 697-wide window that works fine, failing every query on a 3px
+    # margin. Height stays generous because the result list needs vertical room.
+    if(($r.Right-$r.Left)/$scale -lt 660 -or ($r.Bottom-$r.Top)/$scale -lt 500){
         # Carry the measured geometry into the error: a bare code cannot be diagnosed after the fact,
         # and guessing at the cause previously cost a whole debugging round.
         $rawW=$r.Right-$r.Left;$rawH=$r.Bottom-$r.Top
