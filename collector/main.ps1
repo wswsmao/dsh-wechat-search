@@ -170,11 +170,17 @@ try {
         return
     }
     # When the caller already pre-screened the list, only the surviving keys are opened.
+    # An EMPTY open_keys array is meaningful: it means the model rejected every candidate, so nothing
+    # may be opened. PowerShell treats @() as false, so test for null instead of truthiness —
+    # otherwise a fully-rejected query opened all of its candidates (31 articles on 具身智能).
     $openKeys=$null
-    if($request.open_keys){$openKeys=@{};foreach($k in @($request.open_keys)){$openKeys[[string]$k]=$true}}
+    if($null -ne $request.open_keys){
+        $openKeys=@{}
+        foreach($k in @($request.open_keys)){$openKeys[[string]$k]=$true}
+    }
     foreach($candidate in $script:Candidates){
         Check-Stop;$script:Processed++;$key=(Normalize-Text $candidate.title)+'|'+(Normalize-Text $candidate.account)
-        if($openKeys -and !$openKeys.ContainsKey($key)){continue}
+        if($null -ne $openKeys -and !$openKeys.ContainsKey($key)){continue}
         if($candidate.index -lt 0 -and $cached.ContainsKey($key) -and $keyCounts[$key] -eq 1 -and (!$includeBody -or $cached[$key].body_complete)){continue}
         # WeChat labels non-article rows (mini-program, 视频号) in the account field itself. Opening one
         # raises an app surface that may hold consent buttons, so skip before any click.
