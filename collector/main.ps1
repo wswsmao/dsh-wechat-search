@@ -112,7 +112,7 @@ try {
     if($version -and (Get-Item -LiteralPath $version).VersionInfo.FileMajorPart -ne 4){throw 'WECHAT_VERSION_UNSUPPORTED'}
     Publish-State
     $search=Open-Search;$search=Search-Query $search $request.keyword
-    $script:Phase='discovering';$stable=0;$priorCount=-1;$oldBatches=0;$lastItems=@()
+    $script:Phase='discovering';$stable=0;$priorCount=-1;$lastItems=@()
     while($true){
         Check-Stop;$search=Find-Search;if(!$search){throw 'SEARCH_WINDOW_LOST'}
         $query=(Element-Id $search.root 'weixin-search-input').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value
@@ -128,12 +128,16 @@ try {
         if($lastItems.Count -gt 0){for($i=0;$i -lt [math]::Min($lastItems.Count,$parsed.Count);$i++){if((Normalize-Text $lastItems[$i].title) -cne (Normalize-Text $parsed[$i].title) -or (Normalize-Text $lastItems[$i].account) -cne (Normalize-Text $parsed[$i].account)){throw 'SEARCH_LIST_REORDERED'}}}
         $script:Candidates=@($parsed);$script:LoadCounts+=$parsed.Count
         for($i=1;$i -lt $parsed.Count;$i++){if($null -ne $parsed[$i].age_seconds -and $null -ne $parsed[$i-1].age_seconds -and $parsed[$i].age_seconds -lt $parsed[$i-1].age_seconds){$script:OrderingIssues+=@{type='relative_date_inversion';index=$i};break}}
+        # Stop scrolling once the list is clearly past the window. Results are newest-first, so every
+        # row below the boundary is unusable. Counting cumulatively (not per batch) matters: the
+        # first page already held 38 of 56 rows outside the window, yet the old per-batch rule needed
+        # two consecutive pages of old rows and kept scrolling through a month of dead results.
         $old=@($parsed|Where-Object{$null -ne $_.age_seconds -and $_.age_seconds -ge (([datetimeoffset]::Now-$cutoff).TotalSeconds+86400)})
-        if($old.Count -ge 3){$script:Boundary=$true;$oldBatches++}
+        if($old.Count -ge 3){$script:Boundary=$true}
         if($parsed.Count -eq $priorCount){$stable++}else{$stable=0};$priorCount=$parsed.Count;$lastItems=$parsed
         Publish-State
-        # Require a following load attempt after multiple clearly old results, not a single old article.
-        if($script:Boundary -and $oldBatches -ge 2){break}
+        # A boundary hit is enough: newer rows can only be above them, and we have already read them.
+        if($script:Boundary){break}
         if($stable -ge 3){$script:Exhausted=$true;break}
         Scroll-SearchEnd $search $uiItems
     }
