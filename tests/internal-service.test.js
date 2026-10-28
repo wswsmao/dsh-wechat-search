@@ -51,5 +51,5 @@ test('wait aborted signal requests cancellation, rejects and preserves fixed req
 });
 test('registration uses actual ctx.provide contract and public tools over one shared manager',async(t)=>{
   const f=await fixture(t);const saved=[];const tools=[];const ctx={provide(name,value){saved.push({name,value});return async()=>{saved.push({removed:name});};},tools:{register(tool){tools.push(tool);return ()=>{};}}};
-  const cleanup=registerWechatSearch(ctx,f.manager);assert.equal(saved[0].name,'wechatSearch');assert.deepEqual(Object.keys(saved[0].value),['start','status','cancel','resume','wait','getResult']);assert.equal(tools.length,2);const job=await saved[0].value.start(input);assert.equal((await f.manager.status(job.job_id)).keyword,input.keyword);await cleanup();assert.equal(saved[1].removed,'wechatSearch');
+  const cleanup=registerWechatSearch(ctx,f.manager);assert.equal(saved[0].name,'wechatSearch');assert.deepEqual(Object.keys(saved[0].value),['start','status','cancel','resume','wait','getResult','checkpointPath']);assert.equal(tools.length,2);const job=await saved[0].value.start(input);assert.equal((await f.manager.status(job.job_id)).keyword,input.keyword);await cleanup();assert.equal(saved[1].removed,'wechatSearch');
 });
