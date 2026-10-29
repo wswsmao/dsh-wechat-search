@@ -15,9 +15,16 @@ if($null -ne $request.include_body -and $request.include_body -isnot [bool]){thr
 $includeBody=($request.include_body -eq $true)
 $listOnly=($request.list_only -eq $true)
 function Get-StableKey([string]$Title,[string]$Account){return (Normalize-Text $Title)+'|'+(Normalize-Text $Account)}
-$timeoutMinutes=30;$delayMs=250;$maxRetries=1;$boundarySlackHours=24
+$timeoutMinutes=30;$delayMs=250;$maxRetries=1;$boundarySlackHours=$null
 if($request.settings){if($request.settings.timeout_minutes){$timeoutMinutes=[int]$request.settings.timeout_minutes};if($null -ne $request.settings.delay_ms){$delayMs=[int]$request.settings.delay_ms};if($null -ne $request.settings.max_retries){$maxRetries=[int]$request.settings.max_retries};if($null -ne $request.settings.boundary_slack_hours){$boundarySlackHours=[double]$request.settings.boundary_slack_hours}}
 $timeoutMinutes=[math]::Max(1,[math]::Min(120,$timeoutMinutes));$delayMs=[math]::Max(120,[math]::Min(10000,$delayMs));$maxRetries=[math]::Max(0,[math]::Min(3,$maxRetries))
+# The slack only has to absorb the imprecision of relative dates ("昨天", "3天前"), so it scales with
+# the window instead of being a fixed day: a fixed 24h slack made a 24-hour daily run scroll until it
+# reached rows two days old, which is a full window of useless scrolling.
+if($null -eq $boundarySlackHours){
+  $lookbackDays=[int]$request.lookback_days
+  $boundarySlackHours=if($lookbackDays -le 1){4}elseif($lookbackDays -le 3){6}else{12}
+}
 $boundarySlackHours=[math]::Max(0,[math]::Min(240,$boundarySlackHours))
 $script:Deadline=[datetimeoffset]::Now.AddMinutes($timeoutMinutes)
 $cancelPath=Join-Path $JobDir 'cancel.flag';$checkpointPath=Join-Path $JobDir 'checkpoint.json';$statusPath=Join-Path $JobDir 'status.json'
@@ -129,12 +136,18 @@ try {
         if($lastItems.Count -gt 0){for($i=0;$i -lt [math]::Min($lastItems.Count,$parsed.Count);$i++){if((Normalize-Text $lastItems[$i].title) -cne (Normalize-Text $parsed[$i].title) -or (Normalize-Text $lastItems[$i].account) -cne (Normalize-Text $parsed[$i].account)){throw 'SEARCH_LIST_REORDERED'}}}
         $script:Candidates=@($parsed);$script:LoadCounts+=$parsed.Count
         for($i=1;$i -lt $parsed.Count;$i++){if($null -ne $parsed[$i].age_seconds -and $null -ne $parsed[$i-1].age_seconds -and $parsed[$i].age_seconds -lt $parsed[$i-1].age_seconds){$script:OrderingIssues+=@{type='relative_date_inversion';index=$i};break}}
-        # Stop scrolling once the list is clearly past the window. Results are newest-first, so every
-        # row below the boundary is unusable. Counting cumulatively (not per batch) matters: the
-        # first page already held 38 of 56 rows outside the window, yet the old per-batch rule needed
-        # two consecutive pages of old rows and kept scrolling through a month of dead results.
-        $old=@($parsed|Where-Object{$null -ne $_.age_seconds -and $_.age_seconds -ge (([datetimeoffset]::Now-$cutoff).TotalSeconds+($boundarySlackHours*3600))})
-        if($old.Count -ge 3){$script:Boundary=$true}
+        # Stop scrolling once the list has clearly passed the window. Results are newest-first, so rows
+        # below the boundary cannot be used. Two details matter for precision:
+        #  - compare against the cutoff plus a slack that scales with the window, otherwise a daily run
+        #    keeps scrolling until it reaches rows two days old;
+        #  - require two consecutive old rows rather than a cumulative count, so a single misparsed date
+        #    cannot stop the run early, while a page already past the boundary stops it immediately.
+        $boundarySeconds=([datetimeoffset]::Now-$cutoff).TotalSeconds+($boundarySlackHours*3600)
+        $trailing=0
+        for($i=$parsed.Count-1;$i -ge 0;$i--){
+          if($null -ne $parsed[$i].age_seconds -and $parsed[$i].age_seconds -ge $boundarySeconds){$trailing++}else{break}
+        }
+        if($trailing -ge 2 -or ($parsed.Count -ge 1 -and $null -ne $parsed[-1].age_seconds -and $parsed[-1].age_seconds -ge $boundarySeconds -and $parsed.Count -le 2)){$script:Boundary=$true}
         if($parsed.Count -eq $priorCount){$stable++}else{$stable=0};$priorCount=$parsed.Count;$lastItems=$parsed
         Publish-State
         # A boundary hit is enough: newer rows can only be above them, and we have already read them.
