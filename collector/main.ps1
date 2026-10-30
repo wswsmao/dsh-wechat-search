@@ -214,7 +214,24 @@ try {
                 $search=Find-Search;if(!$search){throw 'SEARCH_WINDOW_LOST'}
                 $actual=(Element-Id $search.root 'weixin-search-input').GetCurrentPattern([System.Windows.Automation.ValuePattern]::Pattern).Current.Value;if($actual -cne $request.keyword){throw 'QUERY_CHANGED'}
                 $items=Search-Items $search;$e=$null
+                # Locate the row by index first; that is exact and cheap while the list is unchanged.
+                # If the list shifted - a newer article pushed every row down, or one was removed - fall
+                # back to finding the row whose title matches, because the article is still on screen.
+                # The title, never the position, decides identity: a moved index must not open a
+                # different article.
                 if($candidate.index -ge 0 -and $candidate.index -lt $items.Count -and (Normalize-Text $items[$candidate.index].Current.Name) -ceq (Normalize-Text $candidate.title)){$e=$items[$candidate.index]}
+                if(!$e){
+                    $titleMatches=@()
+                    foreach($it in $items){
+                        if((Normalize-Text $it.Current.Name) -ceq (Normalize-Text $candidate.title)){$titleMatches+=$it}
+                    }
+                    if($titleMatches.Count -eq 1){$e=$titleMatches[0]}
+                    elseif($titleMatches.Count -gt 1){
+                        # Several rows share the title, so the title alone cannot pick one. Report rather
+                        # than guess: opening the wrong repost would attach the wrong source to the record.
+                        throw 'SEARCH_TITLE_AMBIGUOUS'
+                    }
+                }
                 if(!$e){throw 'SEARCH_INDEX_CHANGED'}
                 $article=Open-Candidate $search $e $candidate $reference
                 $record=$article.record;$record.url=Read-PublicUrl $article.window;$record.identity=Get-ArticleIdentity $record.url;$record.captured_at=[datetimeoffset]::Now.ToString('o');$record.source='logged-in WeChat desktop';$record.query=$request.keyword
