@@ -120,6 +120,19 @@ try {
     if($version -and (Get-Item -LiteralPath $version).VersionInfo.FileMajorPart -ne 4){throw 'WECHAT_VERSION_UNSUPPORTED'}
     Publish-State
     $search=Open-Search;$search=Search-Query $search $request.keyword
+    # When the caller pre-screened the list, only the surviving keys are opened. An EMPTY open_keys
+    # array is meaningful: the model rejected every candidate, so nothing may be opened. PowerShell
+    # treats @() as false, so test for null instead of truthiness.
+    $openKeys=$null
+    if($null -ne $request.open_keys){
+        $openKeys=@{}
+        foreach($k in @($request.open_keys)){$openKeys[[string]$k]=$true}
+    }
+    # The list is read top-down, so a candidate near the bottom is not on screen until the list has been
+    # scrolled past it. Scrolling only as far as the time boundary left those rows unrendered, and the
+    # open loop could not click what was not there. In open mode the stopping rule is instead "every
+    # requested row has been seen", which is what actually matters.
+    $openSeen=@{}
     $script:Phase='discovering';$stable=0;$priorCount=-1;$lastItems=@()
     while($true){
         Check-Stop;$search=Find-Search;if(!$search){throw 'SEARCH_WINDOW_LOST'}
@@ -135,6 +148,11 @@ try {
         $titles=@($uiItems|ForEach-Object{$_.Current.Name});$parsed=ConvertFrom-SearchText $text $titles ([datetimeoffset]::Now);$text=$null
         if($lastItems.Count -gt 0){for($i=0;$i -lt [math]::Min($lastItems.Count,$parsed.Count);$i++){if((Normalize-Text $lastItems[$i].title) -cne (Normalize-Text $parsed[$i].title) -or (Normalize-Text $lastItems[$i].account) -cne (Normalize-Text $parsed[$i].account)){throw 'SEARCH_LIST_REORDERED'}}}
         $script:Candidates=@($parsed);$script:LoadCounts+=$parsed.Count
+        # Remember which requested rows are on screen now, so scrolling can stop as soon as all of them
+        # have been rendered once rather than continuing to the time boundary.
+        if($null -ne $openKeys){
+            foreach($p in $parsed){$k=(Normalize-Text $p.title)+'|'+(Normalize-Text $p.account);if($openKeys.ContainsKey($k)){$openSeen[$k]=$true}}
+        }
         for($i=1;$i -lt $parsed.Count;$i++){if($null -ne $parsed[$i].age_seconds -and $null -ne $parsed[$i-1].age_seconds -and $parsed[$i].age_seconds -lt $parsed[$i-1].age_seconds){$script:OrderingIssues+=@{type='relative_date_inversion';index=$i};break}}
         # Stop scrolling once the list has clearly passed the window. Results are newest-first, so rows
         # below the boundary cannot be used. Two details matter for precision:
@@ -150,6 +168,10 @@ try {
         if($trailing -ge 2 -or ($parsed.Count -ge 1 -and $null -ne $parsed[-1].age_seconds -and $parsed[-1].age_seconds -ge $boundarySeconds -and $parsed.Count -le 2)){$script:Boundary=$true}
         if($parsed.Count -eq $priorCount){$stable++}else{$stable=0};$priorCount=$parsed.Count;$lastItems=$parsed
         Publish-State
+        # In open mode every requested row being rendered is the goal, not reaching the time boundary:
+        # rows below the last requested one are irrelevant, and stopping at the boundary left requested
+        # rows unrendered so they could not be clicked.
+        if($null -ne $openKeys -and $openSeen.Count -ge $openKeys.Count){break}
         # A boundary hit is enough: newer rows can only be above them, and we have already read them.
         if($script:Boundary){break}
         if($stable -ge 3){$script:Exhausted=$true;break}
